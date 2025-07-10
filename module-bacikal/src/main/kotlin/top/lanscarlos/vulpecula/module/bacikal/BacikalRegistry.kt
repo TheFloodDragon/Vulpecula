@@ -4,13 +4,19 @@ import taboolib.common.LifeCycle
 import taboolib.common.TabooLib
 import taboolib.common.platform.Awake
 import taboolib.common.platform.function.getOpenContainers
+import taboolib.common.platform.function.info
 import taboolib.common.platform.function.pluginId
 import taboolib.common.platform.function.registerLifeCycleTask
 import taboolib.library.kether.QuestActionParser
 import taboolib.module.kether.Kether
 import taboolib.module.kether.StandardChannel
+import taboolib.module.metrics.charts.DrilldownPie
+import top.lanscarlos.vulpecula.Vulpecula
+import top.lanscarlos.vulpecula.module.bacikal.action.ExternalActionSource
 import top.lanscarlos.vulpecula.module.bacikal.parser.BacikalActionParser
 import top.lanscarlos.vulpecula.module.bacikal.parser.ComplexActionParser
+import top.lanscarlos.vulpecula.module.bacikal.parser.ExceptionalActionParser
+import java.util.LinkedList
 
 /**
  * Vulpecula
@@ -23,7 +29,10 @@ import top.lanscarlos.vulpecula.module.bacikal.parser.ComplexActionParser
  */
 object BacikalRegistry {
 
+    private val sources: HashMap<String, ExternalActionSource> = hashMapOf()
     private val parsers: HashMap<String, BacikalActionParser> = hashMapOf()
+    private val exceptionalParsers: LinkedList<ExceptionalActionParser> = LinkedList()
+    private val sourceByClass: HashMap<Class<*>, ExternalActionSource> = hashMapOf()
 
     @Awake(LifeCycle.INIT)
     fun onInit() {
@@ -31,32 +40,68 @@ object BacikalRegistry {
             for (parser in parsers.values) {
                 registerAction(parser)
             }
+            Vulpecula.addMetricsChart(DrilldownPie("actionExtension", ::metricsActionExtension))
+            Vulpecula.addMetricsChart(DrilldownPie("extensionAuthor", ::metricsExtensionAuthor))
         }
     }
 
-
-    fun get(id: String): BacikalActionParser {
-        return getOrNull(id) ?: error("Schedule $id not found.")
+    fun getActionParser(id: String): BacikalActionParser {
+        return getActionParserOrNull(id) ?: error("Parser $id not found.")
     }
 
-    fun getOrNull(id: String): BacikalActionParser? {
+    fun getActionParserOrNull(id: String): BacikalActionParser? {
         return parsers[id]
     }
 
     /**
      * 获取所有已注册的语句解析器 ID
      * */
-    fun keys(): Set<String> = parsers.keys
+    fun getActionParserKeys(): Set<String> = parsers.keys
 
     /**
      * 获取所有已注册的语句解析器
      * */
-    fun values(): Collection<BacikalActionParser> = parsers.values
+    fun getActionParserValues(): Collection<BacikalActionParser> = parsers.values
 
     /**
      * 获取所有已注册的语句解析器键值对
      * */
-    fun entries(): Set<Map.Entry<String, BacikalActionParser>> = parsers.entries
+    fun getActionParserEntries(): Set<Map.Entry<String, BacikalActionParser>> = parsers.entries
+
+    fun getActionSource(name: String): ExternalActionSource {
+        return getActionSourceOrNull(name) ?: error("Source $name not found.")
+    }
+
+    fun getActionSourceOrNull(name: String): ExternalActionSource? {
+        return sources[name]
+    }
+
+    fun getActionSourceKeys(): Set<String> = sources.keys
+
+    fun getActionSourceValues(): Collection<ExternalActionSource> = sources.values
+
+    fun getActionSourceEntries(): Set<Map.Entry<String, ExternalActionSource>> = sources.entries
+
+    /**
+     * 注册异常的语句
+     * */
+    internal fun getExceptionalParsers(): List<ExceptionalActionParser> = exceptionalParsers
+
+    fun getActionSourceByClass(clazz: Class<*>): ExternalActionSource {
+        return sourceByClass[clazz] ?: error("No Source registered for class: ${clazz.name}")
+    }
+
+    /**
+     * 注册语句来源
+     *
+     * @param source 语句来源
+     * */
+    fun registerActionSource(source: ExternalActionSource) {
+        sources[source.name] = source
+        for (clazz in source.classes.values) {
+            sourceByClass[clazz.toClass()] = source
+        }
+    }
 
     /**
      * 注册语句解析器
@@ -64,6 +109,10 @@ object BacikalRegistry {
      * @param parser 语句解析器
      * */
     fun registerActionParser(parser: BacikalActionParser) {
+        if (parser is ExceptionalActionParser) {
+            exceptionalParsers.add(parser)
+            return
+        }
         parsers[parser.id] = parser
 
         // 遍历层级并填充父节点
@@ -141,6 +190,34 @@ object BacikalRegistry {
             }
             connection.call(StandardChannel.REMOTE_ADD_ACTION, arrayOf(pluginId, names, namespace))
         }
+    }
+
+    private fun metricsActionExtension(): Map<String, Map<String, Int>> {
+        val outerMap: HashMap<String, HashMap<String, Int>> = hashMapOf()
+        val sources = parsers.values.map { it.source }.distinct()
+        for (source in sources) {
+            val innerMap = outerMap.computeIfAbsent(source.name) { hashMapOf() }
+            innerMap.compute(source.version) { _, value ->
+                value?.plus(1) ?: 1
+            }
+        }
+        info("Submit data to actionSourceVersion")
+        return outerMap
+    }
+
+    private fun metricsExtensionAuthor(): Map<String, Map<String, Int>> {
+        val outerMap: HashMap<String, HashMap<String, Int>> = hashMapOf()
+        val sources = parsers.values.map { it.source }.distinct()
+        for (source in sources) {
+            for (author in source.authors) {
+                val innerMap = outerMap.computeIfAbsent(author) { hashMapOf() }
+                innerMap.compute(source.name) { _, value ->
+                    value?.plus(1) ?: 1
+                }
+            }
+        }
+        info("Submit data to authorToActionSources")
+        return outerMap
     }
 
 }

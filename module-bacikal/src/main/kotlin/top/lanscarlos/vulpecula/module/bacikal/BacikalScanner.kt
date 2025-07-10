@@ -6,24 +6,19 @@ import taboolib.common.inject.ClassVisitor
 import taboolib.common.io.getClasses
 import taboolib.common.io.getResources
 import taboolib.common.platform.Awake
+import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.registerLifeCycleTask
 import taboolib.common.platform.function.releaseResourceFolder
 import taboolib.library.reflex.ReflexClass
-import taboolib.module.configuration.Configuration
-import taboolib.module.configuration.Type
 import top.lanscarlos.vulpecula.module.bacikal.action.ActionSource
 import top.lanscarlos.vulpecula.module.bacikal.action.BuiltInActionSource
 import top.lanscarlos.vulpecula.module.bacikal.action.ExternalActionSource
 import top.lanscarlos.vulpecula.module.bacikal.annotation.BacikalParser
 import top.lanscarlos.vulpecula.module.bacikal.parser.ClassActionParser
 import top.lanscarlos.vulpecula.module.bacikal.parser.ClassActionResolver
+import top.lanscarlos.vulpecula.module.bacikal.parser.ExceptionalActionParser
 import java.io.File
-import java.io.InputStream
-import java.util.Base64
-import kotlin.collections.component1
-import kotlin.collections.component2
-import kotlin.collections.iterator
 
 /**
  * Vulpecula
@@ -35,8 +30,6 @@ import kotlin.collections.iterator
 @Awake(LifeCycle.LOAD)
 object BacikalScanner : ClassVisitor(5) {
 
-    private val metadata = mutableMapOf<String, Array<String>>()
-
     @Awake(LifeCycle.INIT)
     fun onInit() {
         registerLifeCycleTask(LifeCycle.LOAD, 6, runnable = ::scanActionExtension)
@@ -45,7 +38,7 @@ object BacikalScanner : ClassVisitor(5) {
     /**
      * 扫描拓展语句包
      * */
-    fun scanActionExtension() {
+    private fun scanActionExtension() {
         val folder = File(getDataFolder(), "action")
         if (!folder.exists()) {
             releaseResourceFolder("action")
@@ -55,34 +48,23 @@ object BacikalScanner : ClassVisitor(5) {
                 continue
             }
 
-            // 载入类
+            // 载入包体
             ClassAppender.addPath(file.toPath(), false, false)
 
-            // 遍历资源
-            var source: ExternalActionSource? = null
-            for ((name, byteArray) in file.toURI().toURL().getResources()) {
-                when {
-                    name == "plugin.yml" -> {
-                        val config = Configuration.loadFromInputStream(byteArray.inputStream(), Type.YAML)
-                        val name = config.getString("name") ?: "UNKNOWN_NAME"
-                        val version = config.getString("version") ?: "UNKNOWN_VERSION"
-                        val authors = config.getStringList("authors")
-                        source = ExternalActionSource(name, version, authors)
-                    }
-                    name.endsWith(".metadata") -> {
-                        val key = name.substringAfterLast("/").substringBefore('.')
-                        val array = decodeMetadata(byteArray)
-                        metadata[key] = array
-                    }
-                }
-            }
+            val classes = file.toURI().toURL().getClasses()
+            val source = ExternalActionSource(classes, file.toURI().toURL().getResources())
 
             // 遍历 class 对象
-            for (owner in file.toURI().toURL().getClasses().values) {
+            for (owner in classes.values) {
                 if (!owner.hasAnnotation(BacikalParser::class.java)) {
                     continue
                 }
-                val parser = buildClassActionParser(owner, source!!)
+                val parser = try {
+                    buildClassActionParser(owner, source)
+                } catch (ex: Exception) {
+                    console().error { ex.localizedMessage }
+                    ExceptionalActionParser(ex, source)
+                }
                 BacikalRegistry.registerActionParser(parser)
             }
         }
@@ -95,7 +77,12 @@ object BacikalScanner : ClassVisitor(5) {
         if (!owner.hasAnnotation(BacikalParser::class.java)) {
             return
         }
-        val parser = buildClassActionParser(owner, BuiltInActionSource)
+        val parser = try {
+            buildClassActionParser(owner, BuiltInActionSource)
+        } catch (ex: Exception) {
+            console().error { ex.localizedMessage }
+            ExceptionalActionParser(ex, BuiltInActionSource)
+        }
         BacikalRegistry.registerActionParser(parser)
     }
 
@@ -103,14 +90,8 @@ object BacikalScanner : ClassVisitor(5) {
         if (!owner.hasInterface(ClassActionResolver::class.java)) {
             error("Cannot register class ${owner.name} without BacikalActionResolver interface.")
         }
-        val resolver = (findInstance(owner) ?: owner.newInstance()) as? ClassActionResolver
-            ?: error("Cannot create instance of ${owner.name}")
-
         val clazz = owner.toClass()
         val annotation = owner.toClass().getAnnotation(BacikalParser::class.java)
-        val metadata = metadata[clazz.name]
-            ?: this.javaClass.classLoader.getResourceAsStream("metadata/${clazz.name}.metadata")?.let(::decodeMetadata)
-            ?: error("Cannot load metadata for ${clazz.name}")
         val parser = ClassActionParser(
             annotation.id,
             annotation.name,
@@ -118,22 +99,9 @@ object BacikalScanner : ClassVisitor(5) {
             annotation.namespace,
             annotation.description,
             clazz,
-            metadata,
-            source,
-            resolver
+            source
         )
         return parser
-    }
-
-    private fun decodeMetadata(stream: InputStream): Array<String> {
-        return decodeMetadata(byteArray = stream.readAllBytes())
-    }
-
-    private fun decodeMetadata(byteArray: ByteArray): Array<String> {
-        return String(byteArray)
-            .split("\\R".toRegex())
-            .map { Base64.getDecoder().decode(it).toString(Charsets.ISO_8859_1) }
-            .toTypedArray()
     }
 
     override fun getLifeCycle(): LifeCycle {

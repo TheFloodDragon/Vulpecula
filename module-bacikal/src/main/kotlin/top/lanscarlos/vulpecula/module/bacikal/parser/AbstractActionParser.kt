@@ -2,7 +2,6 @@ package top.lanscarlos.vulpecula.module.bacikal.parser
 
 import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
-import taboolib.module.chat.StandardColors
 
 /**
  * Vulpecula
@@ -24,7 +23,7 @@ abstract class AbstractActionParser(
     abstract fun onDrawStructure(maxDepth: Int, currentDepth: Int): List<ComponentText>
 
     protected fun ComponentText.resetColor(): ComponentText {
-        return append(Components.text("").color(StandardColors.RESET))
+        return append(Components.text("§7"))
     }
 
 }

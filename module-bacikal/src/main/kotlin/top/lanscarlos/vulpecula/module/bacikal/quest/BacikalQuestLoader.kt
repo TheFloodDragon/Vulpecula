@@ -5,9 +5,12 @@ import taboolib.library.kether.*
 import taboolib.library.reflex.Reflex.Companion.invokeMethod
 import taboolib.library.reflex.Reflex.Companion.setProperty
 import taboolib.module.kether.Kether
+import taboolib.module.kether.RemoteActionParser
 import taboolib.module.kether.action.ActionGet
 import taboolib.module.kether.action.ActionLiteral
 import taboolib.module.kether.action.ActionProperty
+import top.lanscarlos.vulpecula.module.bacikal.parser.BacikalActionParser
+import top.lanscarlos.vulpecula.module.bacikal.parser.ClassActionParser
 import java.util.LinkedList
 
 /**
@@ -21,6 +24,11 @@ class BacikalQuestLoader : SimpleQuestLoader() {
 
     private lateinit var innerReader: InnerReader
     private lateinit var innerBlockReader: InnerBlockReader
+    private val statistic: HashMap<String, HashMap<String, Int>> = hashMapOf()
+
+    fun getStatistic(): HashMap<String, HashMap<String, Int>> {
+        return statistic
+    }
 
     fun getParsedMessage(): String {
         return innerReader.parsedContent()
@@ -196,6 +204,32 @@ class BacikalQuestLoader : SimpleQuestLoader() {
             properties["BACIKAL_END_LINE"] = lineOf(this.content, index)
             if (parser != null) {
                 properties["BACIKAL_PARSER"] = parser.javaClass.name
+            }
+            when (parser) {
+                null -> {}
+                is BacikalActionParser -> {
+                    val innerMap = statistic.computeIfAbsent("Bacikal") { hashMapOf() }
+                    val key = if (action is ClassActionParser.ClassAction<*>) {
+                        action.getParser().id
+                    } else {
+                        parser.id
+                    }
+                    innerMap.compute(key) { _, value ->
+                        value?.plus(1) ?: 1
+                    }
+                }
+                is RemoteActionParser -> {
+                    val innerMap = statistic.computeIfAbsent("Remote") { hashMapOf() }
+                    innerMap.compute(parser.action) { _, value ->
+                        value?.plus(1) ?: 1
+                    }
+                }
+                else -> {
+                    val innerMap = statistic.computeIfAbsent("Local") { hashMapOf() }
+                    innerMap.compute(header) { _, value ->
+                        value?.plus(1) ?: 1
+                    }
+                }
             }
             return wrap(action, properties)
         }

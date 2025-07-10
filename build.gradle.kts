@@ -24,17 +24,20 @@ subprojects {
             // 安装模块
             install(Basic)
             install(Bukkit)
+            install(BukkitNMS)
+            install(BukkitNMSUtil)
+            install(BukkitNMSDataSerializer)
             install(BukkitUI)
             install(BukkitUtil)
-            install(BukkitNMSUtil)
             install(CommandHelper)
             install(I18n)
+            install(JavaScript)
+            install(Kether)
             install(Metrics)
             install(MinecraftChat)
-            install(Kether)
         }
         version {
-            taboolib = "6.2.3-8cc2f66"
+            taboolib = "6.2.3-12d4045"
         }
         description {
             name(rootProject.name)

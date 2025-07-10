@@ -15,8 +15,11 @@ import taboolib.module.kether.RemoteActionParser
 import top.lanscarlos.vulpecula.common.core.utils.asLang
 import top.lanscarlos.vulpecula.module.bacikal.BacikalRegistry
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
+import top.lanscarlos.vulpecula.module.bacikal.action.BuiltInActionSource
+import top.lanscarlos.vulpecula.module.bacikal.error
 import top.lanscarlos.vulpecula.module.bacikal.info
 import top.lanscarlos.vulpecula.module.bacikal.parser.BacikalActionParser
+import top.lanscarlos.vulpecula.module.bacikal.parser.ExceptionalActionParser
 import top.lanscarlos.vulpecula.module.bacikal.quest.BacikalQuestExecutor
 
 /**
@@ -31,49 +34,63 @@ object ActionCommand {
     @CommandBody
     val action = subCommand {
         literal("registry", literal = registry)
+        literal("reload", literal = reload)
         literal("structure", literal = structure)
         literal("timing", literal = timing)
     }
 
-    val registry: CommandComponent.() -> Unit = {
+    private val registry: CommandComponent.() -> Unit = {
         execute<ProxyCommandSender> { sender, _, _ ->
-            val bacikalCount = BacikalRegistry.values()
-                .filter { !it.id.contains('.') }
-                .size
-            val ketherCount = Kether.scriptRegistry.getProperty<Map<String, Map<String, QuestActionParser>>>("parsers")!!
-                .flatMap { it.value.values }
-                .filter { it !is BacikalActionParser }
-                .size
-            sender.info {
-                asLang("module-bacikal-registry-display-all", bacikalCount + ketherCount)
-            }
             displayBacikalActions(sender, false)
-            displayRemoteActions(sender, false)
-            displayLocalActions(sender, false)
         }
 
-        literal("bacikal") {
+        literal("detail") {
             execute<ProxyCommandSender> { sender, _, _ ->
                 displayBacikalActions(sender, true)
             }
         }
         literal("remote") {
             execute<ProxyCommandSender> { sender, _, _ ->
-                displayRemoteActions(sender, true)
+                displayRemoteActions(sender)
             }
         }
         literal("local") {
             execute<ProxyCommandSender> { sender, _, _ ->
-                displayLocalActions(sender, true)
+                displayLocalActions(sender)
             }
         }
     }
 
-    val structure: CommandComponent.() -> Unit = {
+    private val reload: CommandComponent.() -> Unit = {
+        execute<ProxyCommandSender> { sender, _, _ ->
+            for (source in BacikalRegistry.getActionSourceValues()) {
+                try {
+                    source.reload()
+                    sender.info { asLang("module-bacikal-command-reload-success", source.name) }
+                } catch (e: Exception) {
+                    sender.error { asLang("module-bacikal-command-reload-failure", source.name, e.localizedMessage) }
+                }
+            }
+        }
+
+        dynamic("source") {
+            suggest { BacikalRegistry.getActionSourceKeys().toList() }
+            execute<ProxyCommandSender> { sender, _, name ->
+                try {
+                    BacikalRegistry.getActionSource(name).reload()
+                    sender.info { asLang("module-bacikal-command-reload-success", name) }
+                } catch (e: Exception) {
+                    sender.error { asLang("module-bacikal-command-reload-failure", name, e.localizedMessage) }
+                }
+            }
+        }
+    }
+
+    private val structure: CommandComponent.() -> Unit = {
         dynamic("id") {
-            suggest { BacikalRegistry.keys().toList() }
+            suggest { BacikalRegistry.getActionParserKeys().toList() }
             execute<ProxyCommandSender> { sender, _, id ->
-                val parser = BacikalRegistry.get(id)
+                val parser = BacikalRegistry.getActionParser(id)
                 val component = parser.buildStructure(-1)
                 component.sendTo(sender)
             }
@@ -81,14 +98,14 @@ object ActionCommand {
             restrictInt()
             execute<ProxyCommandSender> { sender, context, depth ->
                 val id = context["id"]
-                val parser = BacikalRegistry.get(id)
+                val parser = BacikalRegistry.getActionParser(id)
                 val component = parser.buildStructure(depth.toInt())
                 component.sendTo(sender)
             }
         }
     }
 
-    val timing: CommandComponent.() -> Unit = {
+    private val timing: CommandComponent.() -> Unit = {
         dynamic("option") {
             restrict<ProxyCommandSender> { _, _, input ->
                 input.matches("(\\d+)(?:x(\\d+))?".toRegex())
@@ -119,41 +136,43 @@ object ActionCommand {
         }
     }
 
-    private fun displayBacikalActions(sender: ProxyCommandSender, header: Boolean) {
-        val bacikalParsers = BacikalRegistry.values().filter { !it.id.contains('.') }
-        if (header) {
-            sender.info { asLang("module-bacikal-registry-display-bacikal", bacikalParsers.size) }
-        }
+    private fun displayBacikalActions(sender: ProxyCommandSender, detail: Boolean) {
+        val bacikalParsers = BacikalRegistry.getActionParserValues()
+            .filter { it !is ExceptionalActionParser && (detail || !it.id.contains('.')) }
+        sender.info { asLang("module-bacikal-command-registry-display-bacikal", bacikalParsers.size) }
         for ((source, parsers) in bacikalParsers.groupBy { it.source }) {
+            val color = if (source is BuiltInActionSource) "§3" else "§b"
             sender.info {
                 asLang(
-                    "module-bacikal-registry-display-item",
+                    "module-bacikal-command-registry-display-item",
                     source.name,
                     source.version,
-                    parsers.joinToString("§7, ") { "§b${it.id}" }
+                    parsers.joinToString("§7, ") { "$color${it.id}" }
                 )
             }
+        }
+
+        // 显示注册异常的信息
+        for (parser in BacikalRegistry.getExceptionalParsers()) {
+            sender.error { parser.exception.localizedMessage }
         }
     }
 
-    private fun displayRemoteActions(sender: ProxyCommandSender, header: Boolean) {
+    private fun displayRemoteActions(sender: ProxyCommandSender) {
         val remoteParsers = Kether.scriptRegistry.getProperty<Map<String, Map<String, QuestActionParser>>>("parsers")!!
             .flatMap { it.value.values }
             .filterIsInstance<RemoteActionParser>()
-        if (header) {
-            sender.info {
-                asLang(
-                    "module-bacikal-registry-display-remote${if (remoteParsers.isEmpty()) "-empty" else ""}",
-                    remoteParsers.size
-                )
-            }
+        if (remoteParsers.isEmpty()) {
+            sender.info { asLang("module-bacikal-command-registry-display-remote-empty") }
+        } else {
+            sender.info { asLang("module-bacikal-command-registry-display-remote", remoteParsers.size) }
         }
         for ((pluginId, parsers) in remoteParsers.groupBy { it.remote.name }) {
             val plugin = Bukkit.getPluginManager().getPlugin(pluginId) ?: error("Unknown plugin id: $pluginId")
             val version = plugin.description.version
             sender.info {
                 asLang(
-                    "module-bacikal-registry-display-item",
+                    "module-bacikal-command-registry-display-item",
                     pluginId,
                     version,
                     parsers.joinToString("§7, ") { "§a${it.action}" }
@@ -162,15 +181,13 @@ object ActionCommand {
         }
     }
 
-    private fun displayLocalActions(sender: ProxyCommandSender, header: Boolean) {
+    private fun displayLocalActions(sender: ProxyCommandSender) {
         val parsers = Kether.scriptRegistry.getProperty<Map<String, Map<String, QuestActionParser>>>("parsers")!!
             .flatMap { it.value.entries }.filter { it.value !is BacikalActionParser && it.value !is RemoteActionParser }
-        if (header) {
-            sender.info { asLang("module-bacikal-registry-display-local", parsers.size) }
-        }
+        sender.info { asLang("module-bacikal-command-registry-display-local", parsers.size) }
         sender.info {
             asLang(
-                "module-bacikal-registry-display-item",
+                "module-bacikal-command-registry-display-item",
                 taboolibId,
                 "6",
                 parsers.joinToString("§7, ") { "§c${it.key}" }

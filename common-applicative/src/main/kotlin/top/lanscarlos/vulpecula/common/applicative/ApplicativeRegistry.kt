@@ -5,7 +5,6 @@ import taboolib.common.inject.ClassVisitor
 import taboolib.common.platform.Awake
 import taboolib.common.platform.function.warning
 import taboolib.library.reflex.ReflexClass
-import java.lang.reflect.ParameterizedType
 
 /**
  * Vulpecula
@@ -69,6 +68,16 @@ object ApplicativeRegistry : ClassVisitor(-4) {
             nameMapping[alias] = applicative
         }
         registry[clazz] = applicative
+        // 处理基本类型映射
+        when (clazz) {
+            Boolean::class.java -> registry[java.lang.Boolean::class.java] = applicative
+            Byte::class.java -> registry[java.lang.Byte::class.java] = applicative
+            Short::class.java -> registry[java.lang.Short::class.java] = applicative
+            Int::class.java -> registry[Integer::class.java] = applicative
+            Long::class.java -> registry[java.lang.Long::class.java] = applicative
+            Float::class.java -> registry[java.lang.Float::class.java] = applicative
+            Double::class.java -> registry[java.lang.Double::class.java] = applicative
+        }
     }
 
     override fun visitStart(owner: ReflexClass) {
@@ -85,24 +94,14 @@ object ApplicativeRegistry : ClassVisitor(-4) {
         // 获取实例
         val applicative = try {
             // 尝试实例化
-            (owner.getInstance() ?: clazz.getDeclaredConstructor().newInstance()) as Applicative<*>
-        } catch (ex: Exception) {
+            (owner.getInstance() ?: clazz.getDeclaredConstructor().newInstance()) as AbstractApplicative<*>
+        } catch (_: Exception) {
             warning("Property \"${clazz.name}\" must have a empty constructor.")
             return
         }
 
-        // 获取泛型类型
-        val type = when (val it = (clazz.genericSuperclass as? ParameterizedType)?.actualTypeArguments?.getOrNull(0)) {
-            is Class<*> -> it
-            is ParameterizedType -> it.rawType as Class<*>
-            else -> {
-                warning("Property \"${clazz.name}\" must have a generic type.")
-                return
-            }
-        }
-
         // 注册
-        registerApplicative(type, applicative)
+        registerApplicative(applicative.clazz, applicative)
     }
 
 }

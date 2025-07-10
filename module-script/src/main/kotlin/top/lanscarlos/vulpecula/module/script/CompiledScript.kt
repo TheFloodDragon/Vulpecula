@@ -1,11 +1,12 @@
 package top.lanscarlos.vulpecula.module.script
 
 import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.function.getDataFolder
 import taboolib.library.kether.Quest
 import taboolib.module.configuration.Configuration
 import taboolib.module.kether.deepVars
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
-import top.lanscarlos.vulpecula.module.bacikal.exception.BacikalRuntimeException
+import top.lanscarlos.vulpecula.module.bacikal.exception.QuestRuntimeException
 import top.lanscarlos.vulpecula.common.applicative.*
 import top.lanscarlos.vulpecula.common.config.*
 import top.lanscarlos.vulpecula.common.core.exception.InvalidTypeException
@@ -42,6 +43,8 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
     val timeout: Long by config.read("timeout").convert(::parseTimeout)
 
     val exceptions: Map<String, Quest> by config.read("exceptions").convert(::parseException)
+
+    val debugOutput: Boolean by config.read("debug.output").boolean(false)
 
     override var quest: Quest = buildQuest()
 
@@ -84,7 +87,7 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         val context = BacikalService.executeLater(quest, timeout, sender, args)
         val startTime = System.currentTimeMillis()
         val future: CompletableFuture<Any?> = context.runActions().exceptionallyCompose { e ->
-            val ex = e.cause as BacikalRuntimeException
+            val ex = e.cause as QuestRuntimeException
             val exceptionName = ex.cause.javaClass.name
             // 匹配异常处理
             val quest = exceptions.entries.find { exceptionName.endsWith(it.key) }?.value
@@ -141,8 +144,11 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
                 .append("}").append('\n')
         }
 
-        // 调试输出
-        File(config.file!!.parent, "#${config.file!!.nameWithoutExtension}.ks").writeText(builder.toString())
+        if (debugOutput) {
+            // 调试输出
+            val path = id.replace('.', File.separatorChar)
+            File(getDataFolder(), "debug/script/$path.ks").writeText(builder.toString())
+        }
 
         return BacikalService.compile(builder.toString(), id, namespace)
     }

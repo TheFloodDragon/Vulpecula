@@ -8,7 +8,6 @@ for (project in rootProject.subprojects.filter { it.depth == 1 && it.name.starts
         dependsOn("cleanResources")
         val dependencies = project.configurations["compileOnly"].dependencies
             .filterIsInstance<ProjectDependency>()
-            .filter { !it.name.startsWith("module-action-") }
             .map { it.dependencyProject }
         for (dependency in dependencies) {
             dependsOn(":${dependency.name}:processResources")
@@ -20,6 +19,10 @@ for (project in rootProject.subprojects.filter { it.depth == 1 && it.name.starts
             for (dependency in dependencies) {
                 for (file in files(dependency.sourceSets["main"].resources)) {
                     val name = file.absolutePath.substringAfter("resources\\")
+                    if (dependency.name.startsWith("module-action-") && name == "config.yml") {
+                        // 排除 Action 中的 config.yml
+                        continue
+                    }
                     val resource = resources.computeIfAbsent(name) { File(workspace, name) }
                     if (!resource.exists()) {
                         resource.parentFile.mkdirs()

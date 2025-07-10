@@ -12,7 +12,7 @@ import top.lanscarlos.vulpecula.common.config.Configs
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldNotFoundException
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldReadException
 import top.lanscarlos.vulpecula.common.core.utils.asLang
-import top.lanscarlos.vulpecula.module.bacikal.exception.BacikalCompileException
+import top.lanscarlos.vulpecula.module.bacikal.exception.QuestCompileException
 import java.io.File
 
 /**
@@ -24,11 +24,11 @@ import java.io.File
  */
 object CommandService {
 
-    internal val module: String get() = asLang("module-command-service-name")
+    internal val name: String get() = asLang("module-command-service-name")
 
     private val directory: File = File(getDataFolder(), "command")
 
-    private val service: ConfigService = ConfigService(id = "command", directory = directory, priority = 8, callback = Callback)
+    private val service: ConfigService = ConfigService("command", name, directory, 8, Callback)
 
     private val registry: HashMap<String, CustomCommand> = hashMapOf()
 
@@ -77,7 +77,7 @@ object CommandService {
                 is ConfigFieldNotFoundException -> {}
                 is ConfigFieldReadException -> {
                     when (val cause = e.cause) {
-                        is BacikalCompileException -> cause.printLocalizedMessage(sender, module)
+                        is QuestCompileException -> cause.printLocalizedMessage(sender, name)
                     }
                 }
                 else -> {
@@ -88,6 +88,10 @@ object CommandService {
 
         override fun onLoadInit(sender: ProxyCommandSender, directory: File) {
             releaseResourceFolder("command")
+        }
+
+        override fun onLoadAutomatic(sender: ProxyCommandSender, id: String, file: File, time: Double) {
+            sender.info(sync = true) { asLang("module-command-service-load-automatic", id, time) }
         }
 
         override fun onLoadSuccess(sender: ProxyCommandSender, created: Int, modified: Int, deleted: Int, failed: Int, time: Double) {

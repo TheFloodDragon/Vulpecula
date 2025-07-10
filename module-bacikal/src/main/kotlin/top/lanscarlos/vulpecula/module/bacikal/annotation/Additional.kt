@@ -7,4 +7,6 @@ package top.lanscarlos.vulpecula.module.bacikal.annotation
  * @author Lanscarlos
  * @since 2024-11-20 11:07
  */
-annotation class Additional(val prefix: Array<String>)
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class Additional(val values: Array<String>)
