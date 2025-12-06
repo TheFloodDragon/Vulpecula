@@ -4,6 +4,7 @@ import taboolib.common.io.digest
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.library.kether.Quest
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
+import top.lanscarlos.vulpecula.module.script.exception.ScriptBlankException
 import java.io.File
 import java.nio.charset.StandardCharsets
 
@@ -21,6 +22,12 @@ class NativeScript(override val id: String, source: String) : AbstractScript() {
     constructor(id: String, file: File) : this(id, file.readText(StandardCharsets.UTF_8))
 
     override val quest: Quest = BacikalService.compile(source, id, listOf("vulpecula"))
+
+    init {
+        if (source.isBlank()) {
+            throw ScriptBlankException()
+        }
+    }
 
     override fun execute(
         sender: ProxyCommandSender?,

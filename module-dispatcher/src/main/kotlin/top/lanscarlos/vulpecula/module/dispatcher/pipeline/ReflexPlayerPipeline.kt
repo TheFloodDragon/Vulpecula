@@ -9,7 +9,6 @@ import top.lanscarlos.vulpecula.common.config.boolean
 import top.lanscarlos.vulpecula.common.config.convert
 import top.lanscarlos.vulpecula.common.config.read
 import top.lanscarlos.vulpecula.common.config.string
-import top.lanscarlos.vulpecula.module.dispatcher.Context
 
 /**
  * Vulpecula
@@ -29,12 +28,17 @@ class ReflexPlayerPipeline(clazz: Class<*>, config: ConfigurationSection) : Abst
 
     val playerField: ClassField? by config.read("player-field").string("~").convert(::parsePlayerField)
 
-    override fun initPlayer(context: Context) {
+    override fun initPrincipal(context: PipelineContext) {
+        if (context.isPrincipalInitialized) {
+            // 已初始化玩家对象
+            return
+        }
         // 解析玩家对象
-        context.setPlayer(playerField?.get(context.event) as? Player)
+        val player = playerField?.get(context.event) as? Player ?: return
+        context.setPrincipal(player)
     }
 
-    override fun filter(context: Context) {
+    override fun filter(context: PipelineContext) {
         if (playerRequired && context.player == null) {
             // 玩家不存在, 过滤本次事件
             context.filter()

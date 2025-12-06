@@ -4,7 +4,7 @@ import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.CommandBody
 import taboolib.common.platform.command.subCommand
 import taboolib.module.kether.printKetherErrorMessage
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.asLang
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
 import top.lanscarlos.vulpecula.module.bacikal.error
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestCompileException
@@ -39,13 +39,13 @@ object EvalCommand {
                 .handle { result, e ->
                     if (e != null) {
                         val ex = e.cause as QuestRuntimeException
-                        ex.printLocalizedMessage(sender, module)
+                        ex.notice(sender)
                     } else {
                         sender.info { asLang("module-bacikal-command-eval-success", result ?: "null") }
                     }
                 }
         } catch (ex: QuestCompileException) {
-            ex.printLocalizedMessage(sender, module)
+            ex.notice(sender)
         } catch (ex: Throwable) {
             ex.printKetherErrorMessage(true)
             sender.error { asLang("module-bacikal-command-eval-failure", ex.localizedMessage) }

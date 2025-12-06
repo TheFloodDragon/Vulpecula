@@ -1,14 +1,21 @@
 package top.lanscarlos.vulpecula.module.command
 
 import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.ProxyPlayer
 import taboolib.common.platform.command.CommandContext
 import taboolib.common.platform.command.component.CommandComponent
 import taboolib.common.platform.command.component.CommandComponentLiteral
-import taboolib.common.platform.function.warning
 import taboolib.library.configuration.ConfigurationSection
-import top.lanscarlos.vulpecula.common.applicative.applicativeBoolean
-import top.lanscarlos.vulpecula.common.applicative.applicativeStringList
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import taboolib.module.configuration.Configuration
+import top.lanscarlos.vulpecula.common.config.boolean
+import top.lanscarlos.vulpecula.common.config.convert
+import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldReadException
+import top.lanscarlos.vulpecula.common.config.mapList
+import top.lanscarlos.vulpecula.common.config.read
+import top.lanscarlos.vulpecula.common.config.stringList
+import top.lanscarlos.vulpecula.common.exception.DefaultLocalizedException
+import top.lanscarlos.vulpecula.common.lang.Lang
+import top.lanscarlos.vulpecula.common.utils.withConsole
 import java.util.*
 
 /**
@@ -18,15 +25,17 @@ import java.util.*
  * @author Lanscarlos
  * @since 2025/4/29 13:23
  */
-class LiteralNode(id: String, parent: Node?, section: ConfigurationSection) : Node(id, parent, section) {
+open class LiteralNode(id: String, parent: Node?, config: ConfigurationSection) : Node(id, parent, config) {
 
-    val aliases: List<String> = section["aliases"].applicativeStringList(emptyList())
+    val aliases: List<String> by config.read("aliases").stringList(emptyList())
 
-    val hidden: Boolean = section["hidden"].applicativeBoolean(false)
+    val hidden: Boolean by config.read("hidden").boolean(false)
 
-    val parameters: List<DynamicNode> = parseParameters(section.getMapList("parameters"))
+    val parameters: List<ParameterNode> by config.read("parameters").mapList().convert(::parseParameters)
 
     override fun build(): CommandComponent {
+        validateBinding()
+
         val component = CommandComponentLiteral(
             aliases = arrayOf(name, *aliases.toTypedArray()),
             hidden = hidden,
@@ -36,7 +45,11 @@ class LiteralNode(id: String, parent: Node?, section: ConfigurationSection) : No
         )
 
         // 执行器
-        component.execute(bind = ProxyCommandSender::class.java, function = ::execute)
+        if (playerRequired) {
+            component.execute(bind = ProxyPlayer::class.java, function = ::execute)
+        } else {
+            component.execute(bind = ProxyCommandSender::class.java, function = ::execute)
+        }
 
         // 处理子节点
         for (child in children) {
@@ -46,27 +59,55 @@ class LiteralNode(id: String, parent: Node?, section: ConfigurationSection) : No
         return component
     }
 
-    override fun execute(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>, argument: String) {
+    override fun execute(sender: ProxyPlayer, context: CommandContext<ProxyPlayer>, argument: String) {
         if (parameters.isNotEmpty() && !parameters.first().optional) {
-            warning("LiteralNode 缺失必要参数: ${parameters.first().name}")
-            sender.error(sync = true) { asLang("module-command-exception-missing-argument", parameters.first().name) }
+            Lang.MODULE_COMMAND_MISSING_ARGUMENT.error(sender.withConsole(), parameters.first().name)
             return
         }
         super.execute(sender, context, argument)
     }
 
-    private fun parseParameters(value: List<Map<*, *>>): List<DynamicNode> {
+    override fun execute(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>, argument: String) {
+        if (parameters.isNotEmpty() && !parameters.first().optional) {
+            Lang.MODULE_COMMAND_MISSING_ARGUMENT.error(sender.withConsole(), parameters.first().name)
+            return
+        }
+        super.execute(sender, context, argument)
+    }
+
+    protected fun validateBinding() {
+        if (parameters.isNotEmpty()) {
+            // 参数不为空，子命令节点不允许存在 LiteralNode
+            for (child in children) {
+                require(child !is LiteralNode) {
+                    throw IllegalBindingException(id, child.id)
+                }
+            }
+        }
+    }
+
+    private fun parseParameters(value: List<Map<*, *>>): List<ParameterNode> {
         if (value.isEmpty()) {
             return emptyList()
         }
-        require(executor != null) {
-            asLang("module-command-exception-executor-not-found", id)
-        }
-        val list = LinkedList<DynamicNode>()
+        val executor = executor ?: throw ExecutorNotFoundException(id)
+        val list = LinkedList<ParameterNode>()
         var parent: Node = this
-        for (section in value) {
-            val id = section["name"]!!.toString()
-            val node = ParameterNode(id, parent, section.plus("execute" to executor.script))
+        for ((index, section) in value.withIndex()) {
+            val id = section["name"]?.toString() ?: throw ParameterNameUndefinedException(this.id, index)
+            val config = Configuration.fromMap(mapOf("section" to section)).getConfigurationSection("section")!!
+            val node = try {
+                ParameterNode(id, parent, config, executor.script)
+            } catch (e: ParameterNode.StrategyConflictException) {
+                throw e.also { it.arguments[0] = this.id }
+            } catch (e: ConfigFieldReadException) {
+                when (val cause = e.cause) {
+                    is ParameterNode.IllegalStrategyException -> {
+                        throw cause.also { it.arguments[0] = this.id }
+                    }
+                    else -> throw e
+                }
+            }
             list += node
             parent.children += node
             parent = node
@@ -74,17 +115,13 @@ class LiteralNode(id: String, parent: Node?, section: ConfigurationSection) : No
         return list
     }
 
-    inner class ParameterNode(id: String, parent: Node?, section: Map<*, *>) : DynamicNode(id, parent, section) {
+    class ExecutorNotFoundException(nodeId: String) :
+        DefaultLocalizedException(Lang.MODULE_COMMAND_EXECUTOR_NOT_FOUND, arrayOf(nodeId))
 
-        override fun execute(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>, argument: String) {
-            if (children.isNotEmpty() && !children.single().optional) {
-                warning("ParameterNode 缺失必要参数: ${children.single().name}")
-                sender.error(sync = true) { asLang("module-command-exception-missing-argument", children.single().name) }
-                return
-            }
-            super.execute(sender, context, argument)
-        }
+    class ParameterNameUndefinedException(nodeId: String, index: Int) :
+        DefaultLocalizedException(Lang.MODULE_COMMAND_PARAMETER_NAME_UNDEFINED, arrayOf(nodeId, index + 1))
 
-    }
+    class IllegalBindingException(id: String, childId: String) :
+        DefaultLocalizedException(Lang.MODULE_COMMAND_ILLEGAL_BINDING, arrayOf(id, childId))
 
 }

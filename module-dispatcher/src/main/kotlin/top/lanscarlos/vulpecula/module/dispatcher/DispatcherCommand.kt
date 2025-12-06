@@ -4,7 +4,8 @@ import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.CommandBody
 import taboolib.common.platform.command.component.CommandComponent
 import taboolib.common.platform.command.subCommand
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.withConsole
 
 /**
  * Vulpecula
@@ -50,7 +51,7 @@ object DispatcherCommand {
 
     private val reload: CommandComponent.() -> Unit = {
         execute<ProxyCommandSender> { sender, _, _ ->
-            DispatcherService.reload(sender)
+            DispatcherService.reload(sender.withConsole())
         }
     }
 

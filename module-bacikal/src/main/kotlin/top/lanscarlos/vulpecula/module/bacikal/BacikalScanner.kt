@@ -1,24 +1,19 @@
 package top.lanscarlos.vulpecula.module.bacikal
 
-import taboolib.common.ClassAppender
 import taboolib.common.LifeCycle
 import taboolib.common.inject.ClassVisitor
-import taboolib.common.io.getClasses
-import taboolib.common.io.getResources
 import taboolib.common.platform.Awake
 import taboolib.common.platform.function.console
-import taboolib.common.platform.function.getDataFolder
-import taboolib.common.platform.function.registerLifeCycleTask
-import taboolib.common.platform.function.releaseResourceFolder
 import taboolib.library.reflex.ReflexClass
-import top.lanscarlos.vulpecula.module.bacikal.action.ActionSource
-import top.lanscarlos.vulpecula.module.bacikal.action.BuiltInActionSource
-import top.lanscarlos.vulpecula.module.bacikal.action.ExternalActionSource
-import top.lanscarlos.vulpecula.module.bacikal.annotation.BacikalParser
+import top.lanscarlos.vulpecula.module.bacikal.annotation.Parser
+import top.lanscarlos.vulpecula.module.bacikal.annotation.Property
+import top.lanscarlos.vulpecula.module.bacikal.extension.Extension
+import top.lanscarlos.vulpecula.module.bacikal.extension.NativeExtension
 import top.lanscarlos.vulpecula.module.bacikal.parser.ClassActionParser
 import top.lanscarlos.vulpecula.module.bacikal.parser.ClassActionResolver
 import top.lanscarlos.vulpecula.module.bacikal.parser.ExceptionalActionParser
-import java.io.File
+import top.lanscarlos.vulpecula.module.bacikal.property.BacikalProperty
+import java.lang.reflect.ParameterizedType
 
 /**
  * Vulpecula
@@ -30,68 +25,38 @@ import java.io.File
 @Awake(LifeCycle.LOAD)
 object BacikalScanner : ClassVisitor(5) {
 
-    @Awake(LifeCycle.INIT)
-    fun onInit() {
-        registerLifeCycleTask(LifeCycle.LOAD, 6, runnable = ::scanActionExtension)
+    /**
+     * 扫描类式语句解析器或属性
+     * */
+    override fun visitStart(owner: ReflexClass) {
+        visitClass(owner, NativeExtension)
     }
 
-    /**
-     * 扫描拓展语句包
-     * */
-    private fun scanActionExtension() {
-        val folder = File(getDataFolder(), "action")
-        if (!folder.exists()) {
-            releaseResourceFolder("action")
-        }
-        for (file in folder.listFiles() ?: emptyArray<File>()) {
-            if (!file.exists() || !file.isFile || !file.canRead() || file.extension != "jar") {
-                continue
-            }
-
-            // 载入包体
-            ClassAppender.addPath(file.toPath(), false, false)
-
-            val classes = file.toURI().toURL().getClasses()
-            val source = ExternalActionSource(classes, file.toURI().toURL().getResources())
-
-            // 遍历 class 对象
-            for (owner in classes.values) {
-                if (!owner.hasAnnotation(BacikalParser::class.java)) {
-                    continue
-                }
+    internal fun visitClass(owner: ReflexClass, extension: Extension) {
+        when {
+            owner.hasAnnotation(Parser::class.java) -> {
+                // 语句
                 val parser = try {
-                    buildClassActionParser(owner, source)
+                    buildClassActionParser(owner, extension)
                 } catch (ex: Exception) {
                     console().error { ex.localizedMessage }
-                    ExceptionalActionParser(ex, source)
+                    ExceptionalActionParser(ex, extension)
                 }
                 BacikalRegistry.registerActionParser(parser)
             }
+            owner.hasAnnotation(Property::class.java) -> {
+                // 属性
+                registerBacikalProperty(owner, extension)
+            }
         }
     }
 
-    /**
-     * 扫描类式语句解析器
-     * */
-    override fun visitStart(owner: ReflexClass) {
-        if (!owner.hasAnnotation(BacikalParser::class.java)) {
-            return
-        }
-        val parser = try {
-            buildClassActionParser(owner, BuiltInActionSource)
-        } catch (ex: Exception) {
-            console().error { ex.localizedMessage }
-            ExceptionalActionParser(ex, BuiltInActionSource)
-        }
-        BacikalRegistry.registerActionParser(parser)
-    }
-
-    private fun buildClassActionParser(owner: ReflexClass, source: ActionSource): ClassActionParser {
+    private fun buildClassActionParser(owner: ReflexClass, extension: Extension): ClassActionParser {
         if (!owner.hasInterface(ClassActionResolver::class.java)) {
-            error("Cannot register class ${owner.name} without BacikalActionResolver interface.")
+            error("Cannot register class ${owner.name} without ClassActionResolver interface.")
         }
         val clazz = owner.toClass()
-        val annotation = owner.toClass().getAnnotation(BacikalParser::class.java)
+        val annotation = owner.toClass().getAnnotation(Parser::class.java)
         val parser = ClassActionParser(
             annotation.id,
             annotation.name,
@@ -99,9 +64,31 @@ object BacikalScanner : ClassVisitor(5) {
             annotation.namespace,
             annotation.description,
             clazz,
-            source
+            extension
         )
         return parser
+    }
+
+    private fun registerBacikalProperty(owner: ReflexClass, extension: Extension) {
+        if (!owner.hasInterface(BacikalProperty::class.java)) {
+            error("Cannot register class ${owner.name} without BacikalProperty interface.")
+        }
+        val javaClass = owner.toClass()
+        val annotation = javaClass.getAnnotation(Property::class.java)
+        val bind = annotation.bind.java
+        val property = owner.getInstance() as BacikalProperty<*>
+        BacikalRegistry.registerProperty(bind, property, extension)
+    }
+
+    /**
+     * 获取类的泛型
+     * */
+    private fun getParameterizedType(clazz: Class<*>): Class<*> {
+        return when (val it = (clazz.genericSuperclass as? ParameterizedType)?.actualTypeArguments?.getOrNull(0)) {
+            is Class<*> -> it
+            is ParameterizedType -> it.rawType as Class<*>
+            else -> throw NullPointerException()
+        }
     }
 
     override fun getLifeCycle(): LifeCycle {

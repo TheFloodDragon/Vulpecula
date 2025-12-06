@@ -12,9 +12,10 @@ import top.lanscarlos.vulpecula.common.config.convert
 import top.lanscarlos.vulpecula.common.config.int
 import top.lanscarlos.vulpecula.common.config.read
 import top.lanscarlos.vulpecula.common.config.string
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.asLang
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestRuntimeException
 import top.lanscarlos.vulpecula.module.dispatcher.pipeline.ListPipeline
+import top.lanscarlos.vulpecula.module.dispatcher.pipeline.PipelineContext
 import top.lanscarlos.vulpecula.module.dispatcher.pipeline.PipelineRegistry
 import top.lanscarlos.vulpecula.module.script.Script
 import top.lanscarlos.vulpecula.module.script.ScriptFlow
@@ -36,13 +37,13 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
 
     override val weight: Int by config.read("weight").int(8)
 
-    override val preprocessing: Script? by config.read("pre-processing").convert(::parseScriptOrNull)
+    override val preprocessing: Script? by config.read("before-execute").convert(::parseScriptOrNull)
 
-    override val postprocessing: Script? by config.read("post-processing").convert(::parseScriptOrNull)
+    override val postprocessing: Script? by config.read("after-execute").convert(::parseScriptOrNull)
 
     override val executable: Script by config.read("execute").convert(::parseScript)
 
-    val pipeline: Pipeline<*> by config.read("rule").convert(::parsePipeline)
+    val pipeline: Pipeline by config.read("rule").convert(::parsePipeline)
 
     init {
         enable()
@@ -68,8 +69,8 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
     }
 
     override fun accept(event: Event) {
-        val context = Context(event)
-        pipeline.initPlayer(context)
+        val context = PipelineContext(event)
+        pipeline.initPrincipal(context)
         pipeline.filter(context)
 
         // 判断处理状态
@@ -95,10 +96,10 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
         if (preprocessing != null) {
             flow.add(preprocessing!!)
             flow.postprocess { task ->
-                when (val status = task.variables()["@EVENT_STATUS"]) {
+                when (val status = task.variables()["@VULPECULA_CONTEXT_EVENT_STATUS"]) {
                     null -> {
                         // 更新阻断
-                        pipeline.postprocess(context)
+                        pipeline.afterFilter(context)
                     }
                     "CANCELED" -> {
                         info("取消事件.")
@@ -115,7 +116,7 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
             }
         } else {
             // 更新阻断
-            pipeline.postprocess(context)
+            pipeline.afterFilter(context)
         }
 
         flow.add(executable)
@@ -127,8 +128,13 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
         flow.onFailure(::onScriptFailure)
 
         // 执行脚本流
-        flow.execute().exceptionally {
-            onFailure(it.cause as Exception)
+        flow.execute().handle { result, ex ->
+            if (ex != null) {
+                onFailure(ex.cause as Exception)
+            } else {
+                context.result = result
+                pipeline.postprocess(context)
+            }
         }
     }
 
@@ -139,12 +145,10 @@ class DefaultDispatcher(override val id: String, val config: Configuration) : Di
     private fun onScriptFailure(ex: QuestRuntimeException) {
         // 脚本运行异常时, 暂停任务
         console().error { asLang("module-dispatcher-run-failure", id) }
-        console().error { ex.getActionMessage() }
-        console().error { ex.getReasonMessage() }
-        console().error { ex.getDetailMessage() }
+        ex.notice(console())
     }
 
-    private fun parsePipeline(value: Any?): Pipeline<*> {
+    private fun parsePipeline(value: Any?): Pipeline {
         val name = config.getString("listen-event")!!
         val config = if (value != null) {
             value as ConfigurationSection

@@ -5,15 +5,13 @@ import taboolib.common5.Baffle
 import taboolib.common5.Baffle.BaffleCounter
 import taboolib.common5.Baffle.BaffleTime
 import taboolib.library.configuration.ConfigurationSection
+import top.lanscarlos.vulpecula.common.applicative.IntApplicative
+import top.lanscarlos.vulpecula.common.applicative.StringApplicative
 import top.lanscarlos.vulpecula.common.config.boolean
 import top.lanscarlos.vulpecula.common.config.convert
 import top.lanscarlos.vulpecula.common.config.read
-import top.lanscarlos.vulpecula.common.config.string
-import top.lanscarlos.vulpecula.common.core.exception.InvalidTypeException
-import top.lanscarlos.vulpecula.common.core.utils.TimeUtil
-import top.lanscarlos.vulpecula.module.dispatcher.Context
+import top.lanscarlos.vulpecula.common.utils.TimeUtil
 import java.util.concurrent.TimeUnit
-import java.util.function.Consumer
 
 /**
  * Vulpecula
@@ -29,13 +27,24 @@ class BafflePipeline(clazz: Class<*>, config: ConfigurationSection) : AbstractPi
 
     override val priority: Int = 128 // 分配较高的优先级用于优先处理冷却
 
-    val baffle: Baffle? by config.read("baffle").convert(::parseBaffle)
+    val counterBaffle: Baffle? by config.read("baffle-count").convert(::parseCounterBaffle)
+
+    val timeBaffle: Baffle? by config.read("baffle-time").convert(::parseTimeBaffle)
 
     val cancel: Boolean by config.read("baffle-cancel").boolean(false)
 
-    override fun filter(context: Context) {
-        val baffle = this.baffle ?: return
-        if (baffle.hasNext("*", false)) {
+    val global: Boolean by config.read("baffle-global").boolean(false)
+
+    override fun filter(context: PipelineContext) {
+        if (counterBaffle == null && timeBaffle == null) {
+            return
+        }
+        val id = if (global) "*" else context.principalId
+        if (counterBaffle?.hasNext(id, false) == true) {
+            // 计数通过
+            return
+        }
+        if (timeBaffle?.hasNext(id, false) == true) {
             // 冷却通过
             return
         }
@@ -47,20 +56,24 @@ class BafflePipeline(clazz: Class<*>, config: ConfigurationSection) : AbstractPi
         // TODO 阻断处理流的传播
     }
 
-    override fun postprocess(context: Context) {
+    override fun afterFilter(context: PipelineContext) {
         // 更新阻断器数据
-        baffle?.next()
+        counterBaffle?.next()
+        timeBaffle?.next()
     }
 
-    private fun parseBaffle(value: Any?): Baffle? {
+    private fun parseCounterBaffle(value: Any?): Baffle? {
         if (value == null) {
             return null
         }
-        return when (value) {
-            is Number -> BaffleCounter.of(value.toInt())
-            is String -> BaffleTime.of(TimeUtil.parse(value), TimeUnit.MILLISECONDS)
-            else -> throw InvalidTypeException(value)
+        return BaffleCounter.of(IntApplicative.convert(value))
+    }
+
+    private fun parseTimeBaffle(value: Any?): Baffle? {
+        if (value == null) {
+            return null
         }
+        return BaffleTime.of(TimeUtil.parse(StringApplicative.convert(value)), TimeUnit.MILLISECONDS)
     }
 
 }

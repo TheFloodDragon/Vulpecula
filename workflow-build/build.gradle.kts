@@ -5,7 +5,7 @@ taboolib {
 for (project in rootProject.subprojects.filter { it.depth == 1 && it.name.startsWith("plugin-") }) {
     project.tasks.register("cleanResources") {
         delete(project.layout.buildDirectory.dir("resources"))
-        val workspace = file(project.layout.buildDirectory.dir("resources/main/action")).also(File::mkdirs)
+        file(project.layout.buildDirectory.dir("resources/main/extension")).also(File::mkdirs)
     }
     project.tasks.jar {
         archiveClassifier.set("")
@@ -14,9 +14,12 @@ for (project in rootProject.subprojects.filter { it.depth == 1 && it.name.starts
             .filterIsInstance<ProjectDependency>()
             .map { it.dependencyProject }
         for (dependency in dependencies) {
-            dependsOn(":${dependency.name}:generateMetadata")
+            if (dependency.name.startsWith("extension-action-")) {
+                dependsOn(":${dependency.name}:generateMetadata")
+            }
         }
         dependsOn("embedActions")
+        dependsOn("embedProperties")
         dependsOn("mergeResources")
 
         // 打包资源文件
@@ -26,8 +29,12 @@ for (project in rootProject.subprojects.filter { it.depth == 1 && it.name.starts
 
         // 打包子项目源码
         for (dependency in dependencies) {
-            if (dependency.name.startsWith("module-action-")) {
+            if (dependency.name.startsWith("extension-action-")) {
                 // 排除拓展语句
+                continue
+            }
+            if (dependency.name.startsWith("extension-property-")) {
+                // 排除拓展属性
                 continue
             }
             from(dependency.sourceSets["main"].output) {

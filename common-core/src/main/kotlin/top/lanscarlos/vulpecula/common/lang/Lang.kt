@@ -1,0 +1,115 @@
+package top.lanscarlos.vulpecula.common.lang
+
+import taboolib.common.platform.ProxyCommandSender
+import taboolib.module.lang.asLangText
+import taboolib.module.lang.sendError
+import taboolib.module.lang.sendInfo
+import taboolib.module.lang.sendWarn
+
+/**
+ * Vulpecula
+ * top.lanscarlos.vulpecula.common.core.lang
+ *
+ * @author Lanscarlos
+ * @since 2025/11/22
+ */
+enum class Lang {
+
+    COMMON_CONFIG_LOAD_STATISTICS_SCANNED, // 无变动
+    COMMON_CONFIG_LOAD_STATISTICS_UNMODIFIED, // 无变动
+    COMMON_CONFIG_LOAD_STATISTICS_CREATED, // 创建
+    COMMON_CONFIG_LOAD_STATISTICS_MODIFIED, // 修改
+    COMMON_CONFIG_LOAD_STATISTICS_DELETED, // 删除
+    COMMON_CONFIG_LOAD_STATISTICS_FAILED, // 异常
+    COMMON_CONFIG_LOAD_STATISTICS_BRANCH, // 分支
+    COMMON_CONFIG_LOAD_STATISTICS_BRANCH_END, // 分支结束
+
+    COMMON_CONFIG_FIELD_READ_FAILURE, // 字段载入错误
+
+    COMMON_CONFIG_MAIN_LOAD_SUCCESS, // 主配置载入成功
+    COMMON_CONFIG_MAIN_LOAD_FAILURE, // 主配置载入成功
+    MODULE_DISPATCHER_LOAD_SUCCESS, // 载入成功
+    MODULE_SCHEDULE_LOAD_SUCCESS, // 载入成功
+
+    // 命令相关
+    MODULE_COMMAND_DISPLAY_NAME, // 展示名
+    MODULE_COMMAND_LOAD_SUCCESS, // 载入成功
+    MODULE_COMMAND_LOAD_FAILURE, // 载入失败
+    MODULE_COMMAND_LOAD_AUTOMATIC, // 自动重载
+    MODULE_COMMAND_EXECUTE_SUCCESS, // 执行成功
+    MODULE_COMMAND_EXECUTE_FAILURE, // 执行异常
+    MODULE_COMMAND_RESTRICT_FAILURE, // 约束异常
+    MODULE_COMMAND_RESTRICT_FAILURE_TIMEOUT, // 约束异常, 超时
+    MODULE_COMMAND_RESTRICT_FAILURE_CONVERSION, // 约束异常, 转换异常
+    MODULE_COMMAND_SUGGEST_FAILURE, // 建议异常
+    MODULE_COMMAND_SUGGEST_FAILURE_TIMEOUT, // 建议异常, 超时
+    MODULE_COMMAND_SUGGEST_FAILURE_CONVERSION, // 建议异常, 转换异常
+    MODULE_COMMAND_MISSING_ARGUMENT, // 缺少参数
+    MODULE_COMMAND_EXECUTOR_NOT_FOUND, // 节点无执行体
+    MODULE_COMMAND_DUPLICATE_NODE, // 不合法的策略
+    MODULE_COMMAND_PARENT_NOT_FOUND, // 父节点未定义
+    MODULE_COMMAND_ILLEGAL_PERMISSION, // 不合法的权限默认
+    MODULE_COMMAND_PARAMETER_ILLEGAL_STRATEGY, // 策略冲突
+    MODULE_COMMAND_PARAMETER_STRATEGY_CONFLICT, // 策略冲突
+    MODULE_COMMAND_PARAMETER_NAME_UNDEFINED, // 参数名未定义
+    MODULE_COMMAND_ILLEGAL_BINDING, // 非法的绑定关系
+
+    // 脚本相关
+    MODULE_SCRIPT_DISPLAY_NAME,
+    MODULE_SCRIPT_LOAD_SUCCESS,
+    MODULE_SCRIPT_LOAD_FAILURE,
+    MODULE_SCRIPT_LOAD_AUTOMATIC,
+    MODULE_SCRIPT_RUN_INFO,
+    MODULE_SCRIPT_RUN_SUCCESS,
+    MODULE_SCRIPT_RUN_FAILURE,
+    MODULE_SCRIPT_STOP,
+    MODULE_SCRIPT_STOP_TASK,
+    MODULE_SCRIPT_TASK_EMPTY,
+    MODULE_SCRIPT_TASK_INFO,
+    MODULE_SCRIPT_TASK_BODY,
+    MODULE_SCRIPT_TASK_BRANCH,
+    MODULE_SCRIPT_TASK_BRANCH_END,
+    MODULE_SCRIPT_NOT_FOUND,
+    MODULE_SCRIPT_TASK_NOT_FOUND,
+    MODULE_SCRIPT_BLANK,
+    MODULE_SCRIPT_MISSING_ARGUMENT,
+    MODULE_SCRIPT_EXECUTE_FAILURE,
+    MODULE_SCRIPT_NOT_COMPLETED,
+    MODULE_SCRIPT_CONFLICT,
+
+    EXCEPTION_CONVERT_NULL_VALUE, // 空值强转
+    EXCEPTION_CONVERT_UNSUPPORTED_TYPE, // 不支持的类型转换
+    EXCEPTION_BLANK_STRING, // 空白字符串
+    EXCEPTION_UNSUPPORTED_VALUE, // 不支持的值
+
+    // 配置相关
+    EXCEPTION_CONFIG_SERVICE_LOAD_FAILURE, // 配置服务加载异常
+
+    // 任务相关
+    EXCEPTION_QUEST_COMPILE_FAILURE, // 编译异常
+    EXCEPTION_QUEST_EXECUTE_FAILURE, // 执行异常
+    EXCEPTION_QUEST_ACTION, // 异常语句
+    EXCEPTION_QUEST_REASON, // 异常原因
+    EXCEPTION_QUEST_LOCATION_HEADER, // 异常位置
+    EXCEPTION_QUEST_LOCATION_BODY,
+    EXCEPTION_QUEST_LOCATION_FOOTER;
+
+    val path: String = name.lowercase().replace('_', '-')
+
+    fun asText(receiver: ProxyCommandSender, vararg args: Any): String {
+        return receiver.asLangText(node = path, args = args)
+    }
+
+    fun info(receiver: ProxyCommandSender, vararg args: Any) {
+        receiver.sendInfo(node = path, args = args)
+    }
+
+    fun warn(receiver: ProxyCommandSender, vararg args: Any) {
+        receiver.sendWarn(node = path, args = args)
+    }
+
+    fun error(receiver: ProxyCommandSender, vararg args: Any) {
+        receiver.sendError(node = path, args = args)
+    }
+
+}

@@ -3,13 +3,15 @@ package top.lanscarlos.vulpecula.module.command
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.CommandContext
 import top.lanscarlos.vulpecula.common.applicative.*
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.applicative.exception.TypeConversionException
+import top.lanscarlos.vulpecula.common.exception.AbstractLocalizedException
+import top.lanscarlos.vulpecula.common.lang.Lang
+import top.lanscarlos.vulpecula.common.utils.onlyConsole
+import top.lanscarlos.vulpecula.common.utils.withConsole
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestRuntimeException
 import top.lanscarlos.vulpecula.module.script.Script
 import top.lanscarlos.vulpecula.module.script.ScriptService
-import top.lanscarlos.vulpecula.module.script.exception.ScriptNotFoundException
-import java.util.concurrent.CompletableFuture
-import java.util.function.Consumer
+import top.lanscarlos.vulpecula.module.script.exception.ScriptNotCompletedException
 import java.util.function.Function
 
 /**
@@ -20,66 +22,114 @@ import java.util.function.Function
  * @since 2025/4/30 10:19
  */
 class ScriptExecutor(
-    execution: Any,
+    val script: Script,
+    val disableSuccessMessage: Boolean,
     private val transformArgs: Function<List<String>, Map<String, Any>>
 ) : Suggester, Restrictor {
 
-    val script: Any = parseScript(execution)
+    constructor(
+        execution: String,
+        disableSuccessMessage: Boolean,
+        transformArgs: Function<List<String>, Map<String, Any>>
+    ) : this(
+        ScriptService.compile(execution),
+        disableSuccessMessage,
+        transformArgs
+    )
 
     override fun suggest(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>): List<String> {
-        val rawArgs = getRawArgs(context)
-        val args = transformArgs(rawArgs)
-        val command = getCommand(context, rawArgs)
-        val future = execute(script, sender, args, onSuccess = {}, onFailure = { onFailure("suggest", sender, command, it) })
+        val rawArgs: List<String> = getRawArgs(context) // 原始参数
+        val args: Map<String, Any> = transformArgs.apply(rawArgs)
+        val command: String = getCommand(context, rawArgs)
+        try {
+            return ScriptService.run(script, sender, rawArgs, args)
+                .onFailure { it } // 执行异常时直接返回异常对象
+                .get(ListApplicative)
+                .map(StringApplicative::convert)
+        } catch (e: Exception) {
+            when (e) {
+                is TypeConversionException -> {
+                    val source = e.source
+                    if (source !is QuestRuntimeException) {
+                        // 转换类型异常
+                        Lang.MODULE_COMMAND_SUGGEST_FAILURE_CONVERSION.error(sender.withConsole(), command)
+                        return emptyList()
+                    }
 
-        if (!future.isDone) {
-            sender.error(sync = true) { asLang("module-command-suggest-failure", command) }
-            sender.error(sync = true) { asLang("module-command-suggest-failure-timeout") }
-            return emptyList()
+                    // 脚本运行异常
+                    Lang.MODULE_COMMAND_SUGGEST_FAILURE.error(sender.withConsole(), command)
+                    source.notice(sender.onlyConsole())
+                }
+                is ScriptNotCompletedException -> Lang.MODULE_COMMAND_SUGGEST_FAILURE_TIMEOUT.error(sender.withConsole(), command)
+                is AbstractLocalizedException -> e.notice(sender.withConsole())
+                else -> {
+                    Lang.MODULE_COMMAND_SUGGEST_FAILURE.error(sender.withConsole(), command)
+                    e.printStackTrace()
+                }
+            }
         }
-        val result = future.getNow(null)
-        val list = ListApplicative.convertOrNull(result)
-        if (list == null) {
-            sender.error(sync = true) { asLang("module-command-suggest-failure", command) }
-            sender.error(sync = true) { asLang("module-command-suggest-failure-conversion", result.toString()) }
-            return emptyList()
-        }
-        return list.map { it.toString() }
+        return emptyList()
     }
 
     override fun restrict(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>, argument: String): Boolean {
-        val rawArgs = getRawArgs(context)
-        val args = transformArgs(rawArgs)
-        val command = getCommand(context, rawArgs)
-        val future = execute(script, sender, args, onSuccess = {}, onFailure = { onFailure("restrict", sender, command, it) })
+        val rawArgs: List<String> = getRawArgs(context) // 原始参数
+        val args: Map<String, Any> = transformArgs.apply(rawArgs)
+        val command: String = getCommand(context, rawArgs)
+        try {
+            return ScriptService.run(script, sender, rawArgs, args)
+                .onFailure { it } // 执行异常时直接返回异常对象
+                .get(BooleanApplicative)
+        } catch (e: Exception) {
+            when (e) {
+                is TypeConversionException -> {
+                    val source = e.source
+                    if (source !is QuestRuntimeException) {
+                        // 转换类型异常
+                        Lang.MODULE_COMMAND_RESTRICT_FAILURE_CONVERSION.error(sender.withConsole(), command)
+                        return false
+                    }
 
-        if (!future.isDone) {
-            sender.error(sync = true) { asLang("module-command-restrict-failure", command) }
-            sender.error(sync = true) { asLang("module-command-restrict-failure-timeout") }
-            return false
+                    // 脚本运行异常
+                    Lang.MODULE_COMMAND_RESTRICT_FAILURE.error(sender.withConsole(), command)
+                    source.notice(sender.onlyConsole())
+                }
+                is ScriptNotCompletedException -> Lang.MODULE_COMMAND_RESTRICT_FAILURE_TIMEOUT.error(sender.withConsole(), command)
+                is AbstractLocalizedException -> e.notice(sender.withConsole())
+                else -> {
+                    Lang.MODULE_COMMAND_RESTRICT_FAILURE.error(sender.withConsole(), command)
+                    e.printStackTrace()
+                }
+            }
         }
-        val result = future.getNow(null)
-        val boolean = BooleanApplicative.convertOrNull(result)
-        if (boolean == null) {
-            sender.error(sync = true) { asLang("module-command-restrict-failure", command) }
-            sender.error(sync = true) { asLang("module-command-restrict-failure-conversion", result.toString()) }
-            return false
-        }
-        return boolean
+        return false
     }
 
-    fun execute(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>) {
-        val rawArgs = getRawArgs(context)
-        val args = transformArgs(rawArgs)
-        val command = getCommand(context, rawArgs)
+    fun execute(sender: ProxyCommandSender, context: CommandContext<*>) {
+        val rawArgs: List<String> = getRawArgs(context) // 原始参数
+        val args: Map<String, Any> = transformArgs.apply(rawArgs)
+        val command: String = getCommand(context, rawArgs)
         try {
-            execute(script, sender, args, onSuccess = { onSuccess(sender, command, it) }, onFailure = { onFailure("execute", sender, command, it) })
-        } catch (ex: Exception) {
-            if (ex !is ScriptNotFoundException) {
-                ex.printStackTrace()
+            ScriptService.run(script, sender, rawArgs, args)
+                .onSuccess {
+                    if (disableSuccessMessage) {
+                        return@onSuccess
+                    }
+                    Lang.MODULE_COMMAND_EXECUTE_SUCCESS.info(sender.withConsole(), command)
+                }
+                .onFailure {
+                    Lang.MODULE_COMMAND_EXECUTE_FAILURE.error(sender.withConsole(), command)
+                    it.notice(sender.onlyConsole())
+                }
+        } catch (e: Exception) {
+            when (e) {
+                is AbstractLocalizedException -> {
+                    e.notice(sender.withConsole())
+                }
+                else -> {
+                    Lang.MODULE_COMMAND_EXECUTE_FAILURE.error(sender.withConsole(), command)
+                    e.printStackTrace()
+                }
             }
-            sender.error(sync = true) { asLang("module-command-execute-failure", command) }
-            sender.error(sync = true) { ex.localizedMessage }
         }
     }
 
@@ -94,61 +144,6 @@ class ScriptExecutor(
 
     fun getCommand(context: CommandContext<*>, rawArgs: List<String>): String {
         return "/${context.name} ${rawArgs.joinToString(" ")}"
-    }
-
-    fun transformArgs(rawArgs: List<String>): Map<String, Any> {
-        return transformArgs.apply(rawArgs)
-    }
-
-    private fun execute(
-        script: Any,
-        sender: ProxyCommandSender,
-        args: Map<String, Any>,
-        onSuccess: Consumer<Any?>,
-        onFailure: Function<QuestRuntimeException, Any?>
-    ): CompletableFuture<Any?> {
-        return when (script) {
-            is String -> {
-                ScriptService.run(script, sender, emptyList(), args)
-                    .onSuccess(onSuccess)
-                    .onFailure(onFailure)
-                    .future
-            }
-            is Script -> {
-                ScriptService.run(script, sender, emptyList(), args)
-                    .onSuccess(onSuccess)
-                    .onFailure(onFailure)
-                    .future
-            }
-            else -> error("Unsupported script type: ${script.javaClass.name}")
-        }
-    }
-
-    private fun onSuccess(sender: ProxyCommandSender, command: String, value: Any?) {
-        sender.info { asLang("module-command-execute-success", command, value.toString()) }
-    }
-
-    private fun onFailure(action: String, sender: ProxyCommandSender, command: String, exception: QuestRuntimeException): Any? {
-        sender.error(sync = true) { asLang("module-command-$action-failure", command) }
-        sender.error(sync = true) { exception.getActionMessage() }
-        sender.error(sync = true) { exception.getReasonMessage() }
-        sender.error(sync = true) { exception.getDetailMessage() }
-        return null
-    }
-
-    private fun parseScript(source: Any): Any {
-        if (source is Script) {
-            return source
-        }
-        require(source is String)
-        require(source.isNotBlank())
-        return if (source.lowercase().startsWith("@script:")) {
-            // 调用脚本
-            source.substringAfter(':')
-        } else {
-            // 编译脚本
-            ScriptService.compile(source, "script-executor")
-        }
     }
 
 }

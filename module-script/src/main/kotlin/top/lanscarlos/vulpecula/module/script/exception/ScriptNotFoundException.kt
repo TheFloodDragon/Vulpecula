@@ -1,6 +1,8 @@
 package top.lanscarlos.vulpecula.module.script.exception
 
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.exception.AbstractLocalizedException
+import top.lanscarlos.vulpecula.common.exception.DefaultLocalizedException
+import top.lanscarlos.vulpecula.common.lang.Lang
 
 /**
  * Vulpecula
@@ -9,8 +11,4 @@ import top.lanscarlos.vulpecula.common.core.utils.asLang
  * @author Lanscarlos
  * @since 2025/5/6 14:20
  */
-class ScriptNotFoundException(val id: String) : RuntimeException() {
-
-    override val message: String = asLang("module-script-exception-script-not-found", id)
-
-}
+class ScriptNotFoundException(scriptId: String) : DefaultLocalizedException(Lang.MODULE_SCRIPT_NOT_FOUND, arrayOf(scriptId))

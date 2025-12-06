@@ -6,11 +6,11 @@ import taboolib.common.platform.command.CommandBody
 import taboolib.common.platform.command.component.CommandComponent
 import taboolib.common.platform.command.subCommand
 import taboolib.common.platform.command.suggest
-import taboolib.common.platform.command.suggestPlayers
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.onlinePlayers
 import taboolib.module.chat.Components
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.withConsole
 
 /**
  * Vulpecula
@@ -54,35 +54,17 @@ object ScheduleCommand {
                     sender.error { asLang("module-schedule-command-run-failure", id, e.localizedMessage) }
                 }
             }
-        }.dynamic("sender") {
-            suggestPlayers(listOf("@NULL", "@SELF", "@CONSOLE"))
-            execute<ProxyCommandSender> { sender, context, value ->
-                val id = context["id"]
-                try {
-                    val pid = context["pid"]
-                    val runtimeSender = value.toSender(sender)
-                    ScheduleService.get(id).start(
-                        pid = pid,
-                        sender = runtimeSender
-                    )
-                    sender.info { asLang("module-schedule-command-start-success", id, pid, runtimeSender?.name ?: "null", "[]") }
-                } catch (e: Exception) {
-                    sender.error { asLang("module-schedule-command-run-failure", id, e.localizedMessage) }
-                }
-            }
         }.dynamic("args") {
             execute<ProxyCommandSender> { sender, context, value ->
                 val id = context["id"]
                 try {
                     val pid = context["pid"]
-                    val runtimeSender = context["sender"].toSender(sender)
                     val args = value.split(' ')
                     ScheduleService.get(id).start(
                         pid = pid,
-                        sender = runtimeSender,
                         args = args
                     )
-                    sender.info { asLang("module-schedule-command-start-success", id, pid, runtimeSender?.name ?: "null", args) }
+                    sender.info { asLang("module-schedule-command-start-success", id, pid, args) }
                 } catch (e: Exception) {
                     sender.error { asLang("module-schedule-command-run-failure", id, e.localizedMessage) }
                 }
@@ -180,7 +162,7 @@ object ScheduleCommand {
 
     private val reload: CommandComponent.() -> Unit = {
         execute<ProxyCommandSender> { sender, _, _ ->
-            ScheduleService.reload(sender)
+            ScheduleService.reload(sender.withConsole())
         }
     }
 

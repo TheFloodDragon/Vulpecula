@@ -1,13 +1,16 @@
 package top.lanscarlos.vulpecula.module.command
 
 import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.ProxyPlayer
 import taboolib.common.platform.command.CommandContext
 import taboolib.common.platform.command.component.CommandComponent
 import taboolib.common.platform.function.warning
 import taboolib.library.configuration.ConfigurationSection
-import top.lanscarlos.vulpecula.common.applicative.applicativeBoolean
-import top.lanscarlos.vulpecula.common.core.utils.asLang
-import top.lanscarlos.vulpecula.module.script.Script
+import top.lanscarlos.vulpecula.common.config.boolean
+import top.lanscarlos.vulpecula.common.config.convert
+import top.lanscarlos.vulpecula.common.config.read
+import top.lanscarlos.vulpecula.common.config.string
+import top.lanscarlos.vulpecula.common.config.stringOrNull
 import java.util.LinkedList
 
 /**
@@ -17,17 +20,17 @@ import java.util.LinkedList
  * @author Lanscarlos
  * @since 2025/4/29 10:31
  */
-abstract class Node(val id: String, val parent: Node?, section: Map<*, *>) {
+abstract class Node(val id: String, val parent: Node?, config: ConfigurationSection) {
 
-    constructor(id: String, parent: Node?, section: ConfigurationSection) : this(id, parent, section.toMap())
+    val name: String by config.read("name").string(id)
 
-    val name: String = section["name"]?.toString() ?: id
+    val permission by config.read("permission").string("")
 
-    val permission = section["permission"]?.toString() ?: ""
+    val optional by config.read("optional").boolean(false)
 
-    val optional = section["optional"].applicativeBoolean(false)
+    val playerRequired by config.read("player-required").boolean(false)
 
-    val playerRequired = section["require-player"].applicativeBoolean(false)
+    val disableSuccessMessage by config.read("disable-success-message").boolean(false)
 
     val children = LinkedList<Node>()
 
@@ -41,17 +44,26 @@ abstract class Node(val id: String, val parent: Node?, section: Map<*, *>) {
      * */
     val index: Int
 
-    val executor: ScriptExecutor?
+    open val executor: ScriptExecutor? by config.read("execute").stringOrNull().convert(::parseExecution)
 
     init {
         chain = parseNodeChain()
         index = chain.size - 1
-        executor = section["execute"]?.let(::parseExecution)
     }
 
     abstract fun build(): CommandComponent
 
+    open fun execute(sender: ProxyPlayer, context: CommandContext<ProxyPlayer>, argument: String) {
+        val executor = executor
+        if (executor == null) {
+            warning("此处无执行器.")
+            return
+        }
+        executor.execute(sender, context)
+    }
+
     open fun execute(sender: ProxyCommandSender, context: CommandContext<ProxyCommandSender>, argument: String) {
+        val executor = executor
         if (executor == null) {
             warning("此处无执行器.")
             return
@@ -63,7 +75,7 @@ abstract class Node(val id: String, val parent: Node?, section: Map<*, *>) {
         val args = mutableMapOf<String, Any>("args" to rawArgs)
         var index = 0
         for ((i, rawArg) in rawArgs.withIndex()) {
-            val node = chain[i] as? DynamicNode ?: continue
+            val node = chain[i] as? ParameterNode ?: continue
             args["arg$index"] = rawArg
             args[node.name] = rawArg
             index++
@@ -71,16 +83,11 @@ abstract class Node(val id: String, val parent: Node?, section: Map<*, *>) {
         return args
     }
 
-    private fun parseExecution(value: Any): ScriptExecutor {
-        require(value is String || value is Script) {
-            // 类型不匹配
-            asLang("module-command-exception-invalid-content", id, "execute", value.javaClass.name)
+    private fun parseExecution(value: String?): ScriptExecutor? {
+        if (value == null) {
+            return null
         }
-        require(value !is String || value.isNotBlank()) {
-            // 字符串内容为空
-            asLang("module-command-exception-invalid-content", id, "execute", "BLANK#空白")
-        }
-        return ScriptExecutor(value, ::transformArgs)
+        return ScriptExecutor(value, disableSuccessMessage, ::transformArgs)
     }
 
     private fun parseNodeChain(): List<Node> {

@@ -3,15 +3,17 @@ package top.lanscarlos.vulpecula.module.command
 import taboolib.common.LifeCycle
 import taboolib.common.platform.Awake
 import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.releaseResourceFolder
 import taboolib.module.configuration.Configuration
 import top.lanscarlos.vulpecula.common.config.ConfigService
 import top.lanscarlos.vulpecula.common.config.ConfigServiceCallback
+import top.lanscarlos.vulpecula.common.config.ConfigStatistics
 import top.lanscarlos.vulpecula.common.config.Configs
-import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldNotFoundException
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldReadException
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.exception.AbstractLocalizedException
+import top.lanscarlos.vulpecula.common.lang.Lang
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestCompileException
 import java.io.File
 
@@ -24,7 +26,7 @@ import java.io.File
  */
 object CommandService {
 
-    internal val name: String get() = asLang("module-command-service-name")
+    internal val name: String get() = Lang.MODULE_COMMAND_DISPLAY_NAME.asText(console())
 
     private val directory: File = File(getDataFolder(), "command")
 
@@ -71,18 +73,24 @@ object CommandService {
             registry.remove(id)?.unregister()
         }
 
-        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Exception) {
-            sender.error(sync = true) { asLang("module-command-service-load-failure", id, e.localizedMessage) }
-            when (e) {
-                is ConfigFieldNotFoundException -> {}
+        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Throwable) {
+            val cause = when (e) {
                 is ConfigFieldReadException -> {
                     when (val cause = e.cause) {
-                        is QuestCompileException -> cause.printLocalizedMessage(sender, name)
+//                        is QuestCompileException,
+//                        is LiteralNode.ExecutorNotFoundException,
+//                        is LiteralNode.ParameterNameNotFoundException,
+//                        is LiteralNode.StrategyConflictException -> cause
+                        is AbstractLocalizedException -> cause
+                        else -> e
                     }
                 }
-                else -> {
-                    e.printStackTrace()
-                }
+                else -> e
+            }
+            val message = (cause as? AbstractLocalizedException)?.getLocalizedMessage(sender) ?: cause.localizedMessage ?: ""
+            Lang.MODULE_COMMAND_LOAD_FAILURE.error(sender, id, message)
+            if (cause is QuestCompileException) {
+                cause.notice(sender)
             }
         }
 
@@ -91,30 +99,17 @@ object CommandService {
         }
 
         override fun onLoadAutomatic(sender: ProxyCommandSender, id: String, file: File, time: Double) {
-            sender.info(sync = true) { asLang("module-command-service-load-automatic", id, time) }
+            Lang.MODULE_COMMAND_LOAD_AUTOMATIC.info(sender, id, time)
         }
 
-        override fun onLoadSuccess(sender: ProxyCommandSender, created: Int, modified: Int, deleted: Int, failed: Int, time: Double) {
-            if (created > 0) {
-                sender.info(sync = true) { asLang("module-command-service-load-detail-created", created) }
-            }
-            if (modified > 0) {
-                sender.info(sync = true) { asLang("module-command-service-load-detail-modified", modified) }
-            }
-            if (deleted > 0) {
-                sender.info(sync = true) { asLang("module-command-service-load-detail-deleted", deleted) }
-            }
-            if (failed > 0) {
-                sender.warning(sync = true) { asLang("module-command-service-load-detail-failed", failed) }
-            }
-            sender.info(sync = true) { asLang("module-command-service-load-success", registry.size, time) }
+        override fun onLoadSuccess(sender: ProxyCommandSender, statistics: ConfigStatistics) {
+            Lang.MODULE_COMMAND_LOAD_SUCCESS.info(sender, registry.size, statistics.consumeTime)
         }
 
-        override fun onLoadFailure(sender: ProxyCommandSender, time: Double, e: Throwable) {
-            e.printStackTrace()
-            sender.error(sync = true) { asLang("module-command-service-load-failure", e.localizedMessage) }
+        override fun onLoadFailure(sender: ProxyCommandSender, e: Throwable) {
+            // 加载器异常时需要清空已载入的对象
+            registry.clear()
         }
-
 
     }
 

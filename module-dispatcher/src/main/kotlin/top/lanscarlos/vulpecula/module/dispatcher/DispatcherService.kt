@@ -9,10 +9,12 @@ import taboolib.common.platform.function.releaseResourceFolder
 import taboolib.module.configuration.Configuration
 import top.lanscarlos.vulpecula.common.config.ConfigService
 import top.lanscarlos.vulpecula.common.config.ConfigServiceCallback
+import top.lanscarlos.vulpecula.common.config.ConfigStatistics
 import top.lanscarlos.vulpecula.common.config.Configs
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldNotFoundException
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldReadException
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.lang.Lang
+import top.lanscarlos.vulpecula.common.utils.asLang
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestCompileException
 import java.io.File
 
@@ -90,18 +92,17 @@ object DispatcherService {
             registry.remove(id)?.dispose()
         }
 
-        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Exception) {
+        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Throwable) {
             sender.error(sync = true) { asLang("module-dispatcher-service-file-load-failure", id, e.localizedMessage) }
             when (e) {
                 is ConfigFieldNotFoundException -> {}
                 is ConfigFieldReadException -> {
                     when (val cause = e.cause) {
-                        is QuestCompileException -> cause.printLocalizedMessage(sender, name)
+                        is QuestCompileException -> cause.notice(sender)
                     }
                 }
-                else -> {
-                    e.printStackTrace()
-                }
+                is QuestCompileException -> e.notice(sender)
+                else -> e.printStackTrace()
             }
         }
 
@@ -113,25 +114,13 @@ object DispatcherService {
             sender.info(sync = true) { asLang("module-dispatcher-service-load-automatic", id, time) }
         }
 
-        override fun onLoadSuccess(sender: ProxyCommandSender, created: Int, modified: Int, deleted: Int, failed: Int, time: Double) {
-            if (created > 0) {
-                sender.info(sync = true) { asLang("module-dispatcher-service-load-detail-created", created) }
-            }
-            if (modified > 0) {
-                sender.info(sync = true) { asLang("module-dispatcher-service-load-detail-modified", modified) }
-            }
-            if (deleted > 0) {
-                sender.info(sync = true) { asLang("module-dispatcher-service-load-detail-deleted", deleted) }
-            }
-            if (failed > 0) {
-                sender.warning(sync = true) { asLang("module-dispatcher-service-load-detail-failed", failed) }
-            }
-            sender.info(sync = true) { asLang("module-dispatcher-service-load-success", registry.size, time) }
+        override fun onLoadSuccess(sender: ProxyCommandSender, statistics: ConfigStatistics) {
+            Lang.MODULE_DISPATCHER_LOAD_SUCCESS.info(sender, registry.size, statistics.consumeTime)
         }
 
-        override fun onLoadFailure(sender: ProxyCommandSender, time: Double, e: Throwable) {
-            e.printStackTrace()
-            sender.error(sync = true) { asLang("module-dispatcher-service-load-failure", e.localizedMessage) }
+        override fun onLoadFailure(sender: ProxyCommandSender, e: Throwable) {
+            // 加载器异常时需要清空已载入的对象
+            registry.clear()
         }
 
     }

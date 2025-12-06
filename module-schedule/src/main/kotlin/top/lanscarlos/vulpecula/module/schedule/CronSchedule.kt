@@ -17,7 +17,7 @@ import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.submit
 import taboolib.common.platform.service.PlatformExecutor
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.asLang
 import top.lanscarlos.vulpecula.module.schedule.exception.InvalidCronException
 import java.util.*
 
@@ -90,7 +90,7 @@ class CronSchedule(id: String, config: Configuration) : AbstractSchedule(id, con
         }
     }
 
-    override fun create(pid: String, sender: ProxyCommandSender?, args: List<String>): ScheduleTask {
+    override fun create(pid: String, args: List<String>): ScheduleTask {
         require(prototype || tasks.values.all { !it.state.isRunning }) {
             val runningPid = tasks.values.firstOrNull { it.state.isRunning }
             asLang("module-schedule-exception-conflict-prototype", id, runningPid ?: "null")
@@ -98,7 +98,7 @@ class CronSchedule(id: String, config: Configuration) : AbstractSchedule(id, con
         require(!tasks.containsKey(pid) || tasks[pid]!!.state.isRunning) {
             asLang("module-schedule-exception-conflict-task", id, pid)
         }
-        val task = Task(pid, sender, args)
+        val task = Task(pid, null, args)
         tasks[task.pid] = task
         return task
     }

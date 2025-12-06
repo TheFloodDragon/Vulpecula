@@ -12,11 +12,12 @@ import taboolib.library.kether.QuestActionParser
 import taboolib.library.reflex.Reflex.Companion.getProperty
 import taboolib.module.kether.Kether
 import taboolib.module.kether.RemoteActionParser
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.utils.TimeUtil
+import top.lanscarlos.vulpecula.common.utils.asLang
 import top.lanscarlos.vulpecula.module.bacikal.BacikalRegistry
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
-import top.lanscarlos.vulpecula.module.bacikal.action.BuiltInActionSource
 import top.lanscarlos.vulpecula.module.bacikal.error
+import top.lanscarlos.vulpecula.module.bacikal.extension.NativeExtension
 import top.lanscarlos.vulpecula.module.bacikal.info
 import top.lanscarlos.vulpecula.module.bacikal.parser.BacikalActionParser
 import top.lanscarlos.vulpecula.module.bacikal.parser.ExceptionalActionParser
@@ -63,7 +64,7 @@ object ActionCommand {
 
     private val reload: CommandComponent.() -> Unit = {
         execute<ProxyCommandSender> { sender, _, _ ->
-            for (source in BacikalRegistry.getActionSourceValues()) {
+            for (source in BacikalRegistry.getExtensionValues()) {
                 try {
                     source.reload()
                     sender.info { asLang("module-bacikal-command-reload-success", source.name) }
@@ -74,10 +75,10 @@ object ActionCommand {
         }
 
         dynamic("source") {
-            suggest { BacikalRegistry.getActionSourceKeys().toList() }
+            suggest { BacikalRegistry.getExtensionKeys().toList() }
             execute<ProxyCommandSender> { sender, _, name ->
                 try {
-                    BacikalRegistry.getActionSource(name).reload()
+                    BacikalRegistry.getExtension(name).reload()
                     sender.info { asLang("module-bacikal-command-reload-success", name) }
                 } catch (e: Exception) {
                     sender.error { asLang("module-bacikal-command-reload-failure", name, e.localizedMessage) }
@@ -115,15 +116,15 @@ object ActionCommand {
                 val option = "(\\d+)(?:x(\\d+))?".toRegex().matchEntire(context["option"])!!.groupValues
                 val repeat = option[1].toInt()
                 val group = option[2].ifBlank { "1" }.toInt()
-                var time = top.lanscarlos.vulpecula.common.core.utils.timing()
+                var time = TimeUtil.startTiming()
                 val quest = BacikalService.compile(content, "timing", emptyList())
-                val compileTime = top.lanscarlos.vulpecula.common.core.utils.timing(time)
-                time = top.lanscarlos.vulpecula.common.core.utils.timing()
+                val compileTime = TimeUtil.stopTiming(time)
+                time = TimeUtil.startTiming()
                 val completeTimes = List(group) {
                     repeat(repeat) {
                         BacikalQuestExecutor.execute(quest, "main", -1L, sender, emptyMap()).join()
                     }
-                    top.lanscarlos.vulpecula.common.core.utils.timing(time)
+                    TimeUtil.stopTiming(time)
                 }
                 val averageCompleteTime = completeTimes.average()
 
@@ -139,9 +140,9 @@ object ActionCommand {
     private fun displayBacikalActions(sender: ProxyCommandSender, detail: Boolean) {
         val bacikalParsers = BacikalRegistry.getActionParserValues()
             .filter { it !is ExceptionalActionParser && (detail || !it.id.contains('.')) }
-        sender.info { asLang("module-bacikal-command-registry-display-bacikal", bacikalParsers.size) }
-        for ((source, parsers) in bacikalParsers.groupBy { it.source }) {
-            val color = if (source is BuiltInActionSource) "§3" else "§b"
+        sender.info { asLang("module-bacikal-command-registry-display-bacikal-action", bacikalParsers.size) }
+        for ((source, parsers) in bacikalParsers.groupBy { it.extension }) {
+            val color = if (source is NativeExtension) "§3" else "§b"
             sender.info {
                 asLang(
                     "module-bacikal-command-registry-display-item",

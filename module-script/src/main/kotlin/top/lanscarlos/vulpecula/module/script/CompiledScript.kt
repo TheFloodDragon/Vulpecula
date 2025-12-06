@@ -1,5 +1,13 @@
 package top.lanscarlos.vulpecula.module.script
 
+import top.lanscarlos.vulpecula.common.config.boolean
+import top.lanscarlos.vulpecula.common.config.convert
+import top.lanscarlos.vulpecula.common.config.map
+import top.lanscarlos.vulpecula.common.config.mapList
+import top.lanscarlos.vulpecula.common.config.mapTo
+import top.lanscarlos.vulpecula.common.config.read
+import top.lanscarlos.vulpecula.common.config.string
+import top.lanscarlos.vulpecula.common.config.stringList
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.function.getDataFolder
 import taboolib.library.kether.Quest
@@ -8,10 +16,11 @@ import taboolib.module.kether.deepVars
 import top.lanscarlos.vulpecula.module.bacikal.BacikalService
 import top.lanscarlos.vulpecula.module.bacikal.exception.QuestRuntimeException
 import top.lanscarlos.vulpecula.common.applicative.*
-import top.lanscarlos.vulpecula.common.config.*
-import top.lanscarlos.vulpecula.common.core.exception.InvalidTypeException
-import top.lanscarlos.vulpecula.common.core.utils.asLang
-import top.lanscarlos.vulpecula.common.core.utils.TimeUtil
+import top.lanscarlos.vulpecula.common.exception.DefaultLocalizedException
+import top.lanscarlos.vulpecula.common.exception.InvalidTypeException
+import top.lanscarlos.vulpecula.common.lang.Lang
+import top.lanscarlos.vulpecula.common.utils.TimeUtil
+import top.lanscarlos.vulpecula.module.bacikal.exception.QuestTimeoutException
 import java.io.File
 import java.util.concurrent.CompletableFuture
 
@@ -22,9 +31,11 @@ import java.util.concurrent.CompletableFuture
  * @author Lanscarlos
  * @since 2025-03-20 15:11
  */
-class CompiledScript(override val id: String, val config: Configuration) : AbstractScript() {
+class CompiledScript(id: String, val config: Configuration) : AbstractScript() {
 
-    data class Parameter(val name: String, val applicative: Applicative<Any>, val optional: Boolean, val default: Any?)
+    data class Parameter(val name: String, val applicative: Applicative<out Any>, val optional: Boolean, val default: Any?)
+
+    override val id: String by config.read("name").string(id)
 
     val namespace: List<String> by config.read("namespace").stringList(emptyList())
 
@@ -42,7 +53,11 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
 
     val timeout: Long by config.read("timeout").convert(::parseTimeout)
 
-    val exceptions: Map<String, Quest> by config.read("exceptions").convert(::parseException)
+    val onTimeout: Quest? by config.read("on-timeout").convert(::parseException)
+
+    val onException: Quest? by config.read("on-exception").convert(::parseException)
+
+    val returnConversion: Applicative<*>? by config.read("return-conversion").convert(::parseReturnConversion)
 
     val debugOutput: Boolean by config.read("debug.output").boolean(false)
 
@@ -66,13 +81,15 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         // 参数转换
         for ((index, parameter) in parameters.withIndex()) {
             val arg = args.getOrNull(index)
-            if (parameter.optional) {
-                val value = arg?.let(parameter.applicative::convertOrNull)
-                    ?: parameter.default?.let(parameter.applicative::convertOrNull) // 采用缺省值
+            if (parameter.optional || parameter.default != null) {
+                val value = arg?.let(parameter.applicative::convert)
+                    ?: parameter.default?.let(parameter.applicative::convert) // 采用缺省值
                 wrappedArgs[parameter.name] = value ?: continue
                 continue
             }
-            require(arg != null) { asLang("module-script-exception-argument-missing", index, parameter.name) }
+            require(arg != null) {
+                throw MissingArgumentException(id, index, parameter.name)
+            }
             wrappedArgs[parameter.name] = parameter.applicative.convert(arg)
         }
 
@@ -90,14 +107,12 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
             val ex = e.cause as QuestRuntimeException
             val exceptionName = ex.cause.javaClass.name
             // 匹配异常处理
-            val quest = exceptions.entries.find { exceptionName.endsWith(it.key) }?.value
-            if (quest == null) {
-                // 无异常处理
-                throw ex
-            }
+            val quest = (if (ex is QuestTimeoutException) onTimeout else onException) ?: throw ex
             // 执行异常处理
             val exContext = BacikalService.executeLater(quest, timeout, sender, args.plus(context.rootFrame().deepVars()))
             exContext.runActions()
+        }.thenApply {
+            returnConversion?.convert(it) ?: it
         }
 
         return DefaultScriptTask(pid, this, context, future, startTime).also(ScriptService::trackTask)
@@ -147,7 +162,11 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         if (debugOutput) {
             // 调试输出
             val path = id.replace('.', File.separatorChar)
-            File(getDataFolder(), "debug/script/$path.ks").writeText(builder.toString())
+            val outputFile = File(getDataFolder(), "debug/script/$path.ks")
+            if (!outputFile.parentFile.exists()) {
+                outputFile.parentFile.mkdirs()
+            }
+            outputFile.writeText(builder.toString())
         }
 
         return BacikalService.compile(builder.toString(), id, namespace)
@@ -157,8 +176,8 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         val cache = mutableListOf<Parameter>()
         var optional = false
         for (map in source) {
-            val name = map["name"].toString()
-            val applicative: Applicative<Any> = map["type"].toString().lowercase().let(ApplicativeRegistry::getApplicative)
+            val name = map["name"]?.toString() ?: error("Parameter name is null")
+            val applicative: Applicative<out Any> = map["type"]?.toString()?.lowercase()?.let(ApplicativeRegistry::getApplicative) ?: StringApplicative
             optional = optional || map["optional"].applicativeBoolean(false)
             val default = map["default"]
             cache += Parameter(name, applicative, optional, default)
@@ -200,33 +219,18 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         }
     }
 
-    private fun parseException(value: Any?): Map<String, Quest> {
+    private fun parseException(value: Any?): Quest? {
         if (value == null) {
-            return emptyMap()
+            return null
         }
-        val map = mutableMapOf<String, String>()
+        return BacikalService.compile(value.toString(), "$id-exception", namespace)
+    }
 
-        // 加入默认超时处理
-        config.getString("on-timeout")?.let { map["java.util.concurrent.TimeoutException"] = it }
-
-        when (value) {
-            is List<*> -> {
-                for (item in value.map(MapApplicative::convert)) {
-                    val exception = item["catch"].applicativeString()
-                    val script = item["handle"].applicativeString()
-                    map[exception] = script
-                }
-            }
-            is Map<*, *> -> {
-                for (entry in value) {
-                    val exception = entry.key.applicativeString()
-                    val script = entry.value.applicativeString()
-                    map[exception] = script
-                }
-            }
-            else -> throw InvalidTypeException(value)
+    private fun parseReturnConversion(value: Any?): Applicative<*>? {
+        if (value == null) {
+            return null
         }
-        return map.mapValues { (key, value) -> BacikalService.compile(value, "$id-exception-$key", namespace) }
+        return ApplicativeRegistry.getApplicative<Any>(value.toString().lowercase())
     }
 
     private fun StringBuilder.appendIndent(value: String, indent: Int): StringBuilder {
@@ -241,5 +245,8 @@ class CompiledScript(override val id: String, val config: Configuration) : Abstr
         }
         return this
     }
+
+    class MissingArgumentException(id: String, index: Int, name: String) :
+        DefaultLocalizedException(Lang.MODULE_SCRIPT_MISSING_ARGUMENT, arrayOf(id, index + 1, name))
 
 }

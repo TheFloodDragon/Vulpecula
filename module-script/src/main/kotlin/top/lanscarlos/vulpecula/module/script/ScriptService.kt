@@ -9,11 +9,14 @@ import top.lanscarlos.vulpecula.module.bacikal.exception.QuestCompileException
 import top.lanscarlos.vulpecula.common.config.ConfigService
 import top.lanscarlos.vulpecula.common.config.Configs
 import top.lanscarlos.vulpecula.common.config.ConfigServiceCallback
-import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldNotFoundException
+import top.lanscarlos.vulpecula.common.config.ConfigStatistics
 import top.lanscarlos.vulpecula.common.config.exception.ConfigFieldReadException
 import top.lanscarlos.vulpecula.common.config.exception.UnsupportedFileExtensionException
-import top.lanscarlos.vulpecula.common.core.exception.InvalidTypeException
-import top.lanscarlos.vulpecula.common.core.utils.asLang
+import top.lanscarlos.vulpecula.common.exception.AbstractLocalizedException
+import top.lanscarlos.vulpecula.common.exception.DefaultLocalizedException
+import top.lanscarlos.vulpecula.common.exception.InvalidTypeException
+import top.lanscarlos.vulpecula.common.lang.Lang
+import top.lanscarlos.vulpecula.module.script.exception.ScriptBlankException
 import top.lanscarlos.vulpecula.module.script.exception.ScriptNotFoundException
 import top.lanscarlos.vulpecula.module.script.exception.TaskNotFoundException
 import java.io.File
@@ -27,7 +30,7 @@ import java.io.File
  */
 object ScriptService {
 
-    internal val name: String get() = asLang("module-script-service-name")
+    internal val name: String get() = Lang.MODULE_SCRIPT_DISPLAY_NAME.asText(console())
 
     private val directory: File = File(getDataFolder(), "script")
 
@@ -36,6 +39,8 @@ object ScriptService {
     private val tasks: HashMap<Long, ScriptTask> = hashMapOf()
 
     private var pid: Long = 0
+
+    private val rawMapping: HashMap<String, Script> = hashMapOf() // 用于映射原始文件 ID 与脚本的关系
 
     private val service: ConfigService = ConfigService("script", name, directory, 8, Callback)
 
@@ -49,7 +54,7 @@ object ScriptService {
      * 获取脚本
      *
      * @param id 脚本 ID
-     * @throws IllegalStateException 脚本不存在
+     * @throws ScriptNotFoundException 脚本不存在
      * @return 脚本
      * */
     fun get(id: String): Script = getOrNull(id) ?: throw ScriptNotFoundException(id)
@@ -113,25 +118,17 @@ object ScriptService {
      * @return 脚本
      * */
     fun compile(source: String): Script {
-        return if (source.getOrNull(6) == '@' && source.lowercase().startsWith("script@")) {
+        if (source.isBlank()) {
+            throw ScriptBlankException()
+        }
+        return if (source.getOrNull(0) == '@' && source.lowercase().startsWith("@script:")) {
             // 调用脚本
-            val id = source.substring(7)
+            val id = source.substring(8)
             get(id) // 检测 ID 是否存在
             ProxyScript(id)
         } else {
             NativeScript(source)
         }
-    }
-
-    /**
-     * 编译指定内容为脚本, 本次编译不会被记录
-     *
-     * @param source 源码
-     * @param id 脚本 ID
-     * @return 脚本
-     * */
-    fun compile(source: String, id: String): Script {
-        return NativeScript(id, source)
     }
 
     /**
@@ -143,7 +140,7 @@ object ScriptService {
      * @param variables 脚本变量
      * @param onSuccess 成功回调
      * @param onFailure 异常回调
-     * @throws IllegalStateException 脚本不存在
+     * @throws ScriptNotFoundException 脚本不存在
      * @return 运行结果
      * */
     fun run(
@@ -237,18 +234,28 @@ object ScriptService {
                 "yml", "yaml" -> CompiledScript(id, Configuration.loadFromFile(file))
                 else -> throw UnsupportedFileExtensionException(file.extension)
             }
-            scripts[id] = script
+            rawMapping[id] = script
+            require(!scripts.containsKey(script.id)) {
+                throw ScriptConflictException(script.id, file)
+            }
+            scripts[script.id] = script
         }
 
         override fun onFileModified(sender: ProxyCommandSender, id: String, file: File) {
-            when (val script = scripts[id]!!) {
+            when (val script = rawMapping[id]!!) {
                 is NativeScript -> {
                     // 直接重新创建
                     onFileCreated(sender, id, file)
                 }
                 is CompiledScript -> {
+                    scripts.remove(script.id)
                     // 刷新配置
                     script.config.loadFromFile(file)
+                    // 刷新 id
+                    require(!scripts.containsKey(script.id)) {
+                        throw ScriptConflictException(script.id, file)
+                    }
+                    scripts[script.id] = script
                     // 重新构建脚本任务
                     script.rebuild()
                 }
@@ -257,20 +264,27 @@ object ScriptService {
         }
 
         override fun onFileDeleted(sender: ProxyCommandSender, id: String, file: File) {
+            rawMapping.remove(id)
             scripts.remove(id)
         }
 
-        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Exception) {
-            sender.error(sync = true) { asLang("module-script-service-file-load-failure", id, e.localizedMessage) }
-            when (e) {
-                is ConfigFieldNotFoundException -> {}
+        override fun onFileException(sender: ProxyCommandSender, id: String, file: File, e: Throwable) {
+            val cause = when (e) {
                 is ConfigFieldReadException -> {
                     when (val cause = e.cause) {
-                        is QuestCompileException -> cause.printLocalizedMessage(sender, name)
+                        is AbstractLocalizedException -> cause
+                        else -> e
                     }
                 }
-                is QuestCompileException -> e.printLocalizedMessage(sender, name)
-                else -> e.printStackTrace()
+                else -> e
+            }
+            val message = (cause as? AbstractLocalizedException)?.getLocalizedMessage(sender) ?: cause.localizedMessage
+            if (message == null) {
+                cause.printStackTrace()
+            }
+            Lang.MODULE_SCRIPT_LOAD_FAILURE.error(sender, id, message)
+            if (cause is QuestCompileException) {
+                cause.notice(sender)
             }
         }
 
@@ -279,29 +293,25 @@ object ScriptService {
         }
 
         override fun onLoadAutomatic(sender: ProxyCommandSender, id: String, file: File, time: Double) {
-            sender.info(sync = true) { asLang("module-script-service-load-automatic", id, time) }
+            Lang.MODULE_SCRIPT_LOAD_AUTOMATIC.info(sender, id, time)
         }
 
-        override fun onLoadSuccess(sender: ProxyCommandSender, created: Int, modified: Int, deleted: Int, failed: Int, time: Double) {
-            if (created > 0) {
-                sender.info(sync = true) { asLang("module-script-service-load-detail-created", created) }
-            }
-            if (modified > 0) {
-                sender.info(sync = true) { asLang("module-script-service-load-detail-modified", modified) }
-            }
-            if (deleted > 0) {
-                sender.info(sync = true) { asLang("module-script-service-load-detail-deleted", deleted) }
-            }
-            if (failed > 0) {
-                sender.warning(sync = true) { asLang("module-script-service-load-detail-failed", failed) }
-            }
-            sender.info(sync = true) { asLang("module-script-service-load-success", scripts.size, time) }
+        override fun onLoadSuccess(sender: ProxyCommandSender, statistics: ConfigStatistics) {
+            Lang.MODULE_SCRIPT_LOAD_SUCCESS.info(sender, scripts.size, statistics.consumeTime)
         }
 
-        override fun onLoadFailure(sender: ProxyCommandSender, time: Double, e: Throwable) {
-            e.printStackTrace()
-            sender.error(sync = true) { asLang("module-script-service-load-failure", e.localizedMessage) }
+        override fun onLoadFailure(sender: ProxyCommandSender, e: Throwable) {
+            // 加载器异常时需要清空已载入的对象
+            rawMapping.clear()
+            scripts.clear()
         }
+
     }
+
+    class ScriptConflictException(scriptId: String, file: File) :
+        DefaultLocalizedException(
+            Lang.MODULE_SCRIPT_CONFLICT,
+            arrayOf(scriptId, directory.toPath().relativize(file.toPath()))
+        )
 
 }

@@ -1,8 +1,6 @@
 package top.lanscarlos.vulpecula.module.dispatcher.pipeline
 
-import org.bukkit.event.Event
 import taboolib.library.configuration.ConfigurationSection
-import top.lanscarlos.vulpecula.module.dispatcher.Context
 import top.lanscarlos.vulpecula.module.dispatcher.Pipeline
 
 /**
@@ -12,37 +10,43 @@ import top.lanscarlos.vulpecula.module.dispatcher.Pipeline
  * @author Lanscarlos
  * @since 2025/6/12
  */
-class ListPipeline(name: String, clazz: Class<*>, config: ConfigurationSection) : Pipeline<Event> {
+class ListPipeline(name: String, clazz: Class<*>, config: ConfigurationSection) : Pipeline {
 
     override val priority: Int = 0
 
-    val pipelines: List<Pipeline<*>> = PipelineRegistry.getRelatives(name)
+    val pipelines: List<Pipeline> = PipelineRegistry.getRelatives(name)
         .map {
             it.getDeclaredConstructor(Class::class.java, ConfigurationSection::class.java)
-                .newInstance(clazz, config) as Pipeline<*>
+                .newInstance(clazz, config) as Pipeline
         }.sortedByDescending {
             it.priority
         }
 
-    override fun initPlayer(context: Context) {
+    override fun initPrincipal(context: PipelineContext) {
         for (pipeline in pipelines) {
-            pipeline.initPlayer(context)
+            pipeline.initPrincipal(context)
         }
     }
 
-    override fun initVariables(context: Context) {
+    override fun initVariables(context: PipelineContext) {
         for (pipeline in pipelines) {
             pipeline.initVariables(context)
         }
     }
 
-    override fun filter(context: Context) {
+    override fun filter(context: PipelineContext) {
         for (pipeline in pipelines) {
             pipeline.filter(context)
         }
     }
 
-    override fun postprocess(context: Context) {
+    override fun afterFilter(context: PipelineContext) {
+        for (pipeline in pipelines) {
+            pipeline.afterFilter(context)
+        }
+    }
+
+    override fun postprocess(context: PipelineContext) {
         for (pipeline in pipelines) {
             pipeline.postprocess(context)
         }
